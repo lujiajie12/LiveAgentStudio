@@ -1,6 +1,8 @@
 from pydantic_settings import BaseSettings
 from typing import List
 
+from dotenv import load_dotenv
+import os 
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "LiveAgentStudio"
@@ -11,13 +13,15 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
     
     # Database
-    DATABASE_URL: str = "postgresql://user:password@localhost:5432/liveagent"
+    DATABASE_URL: str = os.getenv("DATABASE_URL")
     
     # Redis
-    REDIS_URL: str = "redis://localhost:6379/0"
+    REDIS_URL: str = os.getenv("REDIS_URL")
     
     # OpenAI
-    OPENAI_API_KEY: str = ""
+    LLM_API_KEY: str = os.getenv("LLM_API_KEY")
+    LLM_BASE_URL: str = os.getenv("LLM_BASE_URL")
+    LLM_MODEL: str = os.getenv("LLM_MODEL")
     
     class Config:
         env_file = ".env"
