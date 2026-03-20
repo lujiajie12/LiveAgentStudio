@@ -18,6 +18,9 @@ dist/
 .agents/
 .codex/
 .vscode/
+.codex/
+.claude/
+.agents/
 .idea/
 *.swp
 *.swo
