@@ -12,11 +12,17 @@ from app.services.guardrail_service import GuardrailService
 
 
 class GraphRuntime:
-    def __init__(self, router_agent: RouterAgent, guardrail_service: GuardrailService):
+    def __init__(
+        self,
+        router_agent: RouterAgent,
+        guardrail_service: GuardrailService,
+        retrieval_pipeline=None,
+    ):
         self.router_agent = router_agent
         self.guardrail_service = guardrail_service
-        self.qa_agent: BaseAgent = QAPlaceholderAgent()
-        self.script_agent: BaseAgent = ScriptPlaceholderAgent()
+        # 把 retrieval_pipeline 注入到需要检索的 agent
+        self.qa_agent: BaseAgent = QAPlaceholderAgent(retrieval_pipeline=retrieval_pipeline)
+        self.script_agent: BaseAgent = ScriptPlaceholderAgent(retrieval_pipeline=retrieval_pipeline)
         self.analyst_agent: BaseAgent = AnalystPlaceholderAgent()
         self.graph = self._build_graph()
 

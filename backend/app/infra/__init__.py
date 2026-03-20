@@ -1,3 +1,7 @@
-from app.infra.container import AppContainer, build_container
+"""Infrastructure package.
 
-__all__ = ["AppContainer", "build_container"]
+Keep package initialization side-effect free to avoid import cycles during
+application startup.
+"""
+
+__all__: list[str] = []

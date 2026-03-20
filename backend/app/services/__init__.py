@@ -1,13 +1,7 @@
-from app.services.auth_service import AuthService
-from app.services.chat_service import ChatService
-from app.services.guardrail_service import GuardrailService
-from app.services.knowledge_service import KnowledgeService
-from app.services.memory_service import MemoryService
+"""Services package.
 
-__all__ = [
-    "AuthService",
-    "ChatService",
-    "GuardrailService",
-    "KnowledgeService",
-    "MemoryService",
-]
+Do not eagerly import service modules here; direct imports from submodules keep
+startup order deterministic and avoid circular imports.
+"""
+
+__all__: list[str] = []
