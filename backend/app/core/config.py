@@ -1,10 +1,7 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
 from typing import List, Optional
 from functools import lru_cache
-from typing import List
-
-from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class AppSettings(BaseSettings):
@@ -17,24 +14,6 @@ class AppSettings(BaseSettings):
     PROJECT_NAME: str = "LiveAgentStudio"
     VERSION: str = "0.1.0"
     API_V1_STR: str = "/api/v1"
-
-    # CORS
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
-
-    # Database
-    DATABASE_URL: Optional[str] = None
-
-    # Redis
-    REDIS_URL: Optional[str] = None
-
-    # LLM
-    LLM_API_KEY: Optional[str] = None
-    LLM_BASE_URL: Optional[str] = None
-    LLM_MODEL: Optional[str] = None
-
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
     DEBUG: bool = True
 
     CORS_ORIGINS: List[str] = Field(
@@ -67,8 +46,12 @@ class AppSettings(BaseSettings):
         default_factory=lambda: ["最强", "国家级", "包治百病"]
     )
 
+    class Config:
+        env_file = ".env"
+        case_sensitive = True
 
-@lru_cache
+
+@lru_cache()
 def get_settings() -> AppSettings:
     return AppSettings()
 
