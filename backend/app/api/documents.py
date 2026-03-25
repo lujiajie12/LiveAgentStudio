@@ -16,7 +16,7 @@ from app.schemas.document import (
 from app.services.document_upload_service import DocumentUploadService
 
 # 创建路由
-router = APIRouter(prefix="/api/v1/documents", tags=["documents"])
+router = APIRouter(prefix="/documents", tags=["documents"])
 
 # 全局服务实例（实际应该通过依赖注入）
 upload_service: Optional[DocumentUploadService] = None

@@ -11,6 +11,9 @@ class ChatStreamRequest(BaseModel):
     user_input: str = Field(min_length=1, max_length=2000)
     current_product_id: str | None = None
     live_stage: LiveStage = LiveStage.warmup
+    hot_keywords: list[str] = Field(default_factory=list)
+    script_style: str | None = None
+    live_offer_snapshot: dict[str, Any] = Field(default_factory=dict)
 
 
 class ChatEvent(BaseModel):

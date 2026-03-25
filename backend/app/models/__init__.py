@@ -1,6 +1,9 @@
 from app.models.entities import (
+    AgentPreferenceORM,
+    HighFrequencyQuestionORM,
     KnowledgeDocumentORM,
     MessageORM,
+    RagOfflineJobORM,
     ReportORM,
     SessionORM,
     ToolCallLogORM,
@@ -8,8 +11,11 @@ from app.models.entities import (
 )
 
 __all__ = [
+    "AgentPreferenceORM",
+    "HighFrequencyQuestionORM",
     "KnowledgeDocumentORM",
     "MessageORM",
+    "RagOfflineJobORM",
     "ReportORM",
     "SessionORM",
     "ToolCallLogORM",

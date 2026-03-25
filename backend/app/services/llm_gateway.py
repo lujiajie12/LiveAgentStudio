@@ -12,9 +12,11 @@ LLM 网关模块
 
 import json
 import re
+from time import perf_counter
 from typing import Any
 
 from app.core.config import settings
+from app.core.observability import record_timed_tool_call
 
 try:
     from langchain_openai import ChatOpenAI
@@ -163,6 +165,7 @@ class OpenAILLMGateway(LLMGateway):
         if self._client is None:
             return self._heuristic_response(user_prompt)
 
+        started = perf_counter()
         try:
             response = await self._client.ainvoke(
                 [
@@ -172,12 +175,45 @@ class OpenAILLMGateway(LLMGateway):
             )
         except Exception as exc:
             if self._is_timeout_error(exc):
+                await record_timed_tool_call(
+                    "router_llm",
+                    started_at=started,
+                    node_name="router",
+                    category="llm",
+                    output_summary="timeout",
+                    status="degraded",
+                )
                 raise TimeoutError("LLM request timed out") from exc
+            await record_timed_tool_call(
+                "router_llm",
+                started_at=started,
+                node_name="router",
+                category="llm",
+                output_summary=str(exc),
+                status="degraded",
+            )
             return self._heuristic_response(user_prompt)
 
         try:
-            return self._extract_json_payload(str(response.content))
+            payload = self._extract_json_payload(str(response.content))
+            await record_timed_tool_call(
+                "router_llm",
+                started_at=started,
+                node_name="router",
+                category="llm",
+                output_summary=str(payload)[:200],
+                status="ok",
+            )
+            return payload
         except Exception:
+            await record_timed_tool_call(
+                "router_llm",
+                started_at=started,
+                node_name="router",
+                category="llm",
+                output_summary="parse_fallback",
+                status="degraded",
+            )
             return self._heuristic_response(user_prompt)
 
     def _heuristic_response(self, user_prompt: str) -> dict[str, Any]:

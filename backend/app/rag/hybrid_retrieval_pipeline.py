@@ -7,6 +7,7 @@
 3. RRF融合
 """
 
+import asyncio
 from typing import List, Dict, Tuple
 from dataclasses import dataclass
 
@@ -86,6 +87,7 @@ class HybridRetrievalPipeline:
         all_results = await self._parallel_retrieve(expanded_queries)
         fused_results = await self._rrf_fusion(all_results, effective_source_hint)
         rerank_results = await self._rerank(query, fused_results)
+        rerank_results = self._apply_source_preference(rerank_results, effective_source_hint)
         context = self._build_context(rerank_results)
         return context, rerank_results
 
@@ -113,8 +115,31 @@ class HybridRetrievalPipeline:
         if source_hint == 'mixed' or source_type == 'other':
             return 0.0
         if source_hint == source_type:
-            return 0.03
-        return -0.01
+            return 0.12
+        return -0.04
+
+    def _apply_source_preference(
+        self,
+        rerank_results: List[RerankResult],
+        source_hint: str,
+    ) -> List[RerankResult]:
+        if source_hint == 'mixed':
+            return rerank_results
+
+        preferred = [result for result in rerank_results if result.source_type == source_hint]
+        if not preferred:
+            return rerank_results
+
+        def sort_key(result: RerankResult):
+            if result.source_type == source_hint:
+                group = 0
+            elif result.source_type == 'other':
+                group = 1
+            else:
+                group = 2
+            return (group, -result.final_score, result.rrf_rank)
+
+        return sorted(rerank_results, key=sort_key)
     
     # ============ 步骤1：查询扩展 ============
     
@@ -147,20 +172,28 @@ class HybridRetrievalPipeline:
     
     async def _parallel_retrieve(self, expanded_queries: Dict) -> List[Dict]:
         """并行检索：BM25 + 向量"""
-        all_results = []
-        
-        for query, weight in expanded_queries['original'] + expanded_queries['expansions']:
-            bm25_results = await self._bm25_search(query)
-            vector_results = await self._vector_search(query)
-            
-            all_results.append({
+        async def retrieve_single(query: str, weight: float) -> Dict:
+            bm25_result, vector_result = await asyncio.gather(
+                self._bm25_search(query),
+                self._vector_search(query),
+                return_exceptions=True,
+            )
+
+            return {
                 'query': query,
                 'weight': weight,
-                'bm25': bm25_results,
-                'vector': vector_results,
-            })
-        
-        return all_results
+                'bm25': [] if isinstance(bm25_result, Exception) else bm25_result,
+                'vector': [] if isinstance(vector_result, Exception) else vector_result,
+            }
+
+        query_weights: Dict[str, float] = {}
+        for query, weight in expanded_queries['original'] + expanded_queries['expansions']:
+            query_weights[query] = query_weights.get(query, 0.0) + weight
+
+        query_plan = list(query_weights.items())
+        return await asyncio.gather(
+            *(retrieve_single(query, weight) for query, weight in query_plan)
+        )
     
     async def _bm25_search(self, query: str) -> List[Dict]:
         """BM25全文搜索"""

@@ -6,6 +6,9 @@ BM25Index (LangChain ElasticsearchStore) + VectorIndex (BGEEmbeddingModel + Milv
 import asyncio
 import logging
 from typing import List, Dict, Any
+from time import perf_counter
+
+from app.core.observability import record_timed_tool_call
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +33,18 @@ class BM25Index:
 
     async def search(self, query: str, top_k: int = 50) -> List[Dict[str, Any]]:
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._search_sync, query, top_k)
+        started = perf_counter()
+        results = await loop.run_in_executor(None, self._search_sync, query, top_k)
+        await record_timed_tool_call(
+            "bm25_search",
+            started_at=started,
+            node_name="retrieval",
+            category="retrieval",
+            input_payload={"query": query, "top_k": top_k},
+            output_summary=f"hits={len(results)}",
+            status="ok" if results else "degraded",
+        )
+        return results
 
     def _search_sync(self, query: str, top_k: int) -> List[Dict[str, Any]]:
         try:
@@ -72,6 +86,26 @@ class BM25Index:
         except Exception:
             return 0
 
+    async def health(self) -> Dict[str, Any]:
+        try:
+            es = self._get_es()
+            ping_ok = es.ping()
+            count = self.count()
+            return {
+                "status": "ok" if ping_ok else "degraded",
+                "count": count,
+                "host": self.host,
+                "port": self.port,
+            }
+        except Exception as exc:
+            return {
+                "status": "degraded",
+                "count": 0,
+                "host": self.host,
+                "port": self.port,
+                "reason": str(exc),
+            }
+
 
 # ---------------------------------------------------------------------------
 # Vector Index - BGEEmbeddingModel + MilvusVectorStore
@@ -106,11 +140,12 @@ class VectorIndex:
         return self._store
 
     async def search(self, query: str, top_k: int = 50) -> List[Dict[str, Any]]:
+        started = perf_counter()
         try:
             vec = await self._get_embed_model().embed_text(query)
             store = await self._get_store()
             results = await store.search(query_embedding=vec, top_k=top_k, score_threshold=0.0)
-            return [
+            payload = [
                 {
                     'doc_id':      r.get('chunk_id', ''),
                     'content':     r.get('content', ''),
@@ -120,8 +155,27 @@ class VectorIndex:
                 }
                 for r in results
             ]
+            await record_timed_tool_call(
+                "vector_search",
+                started_at=started,
+                node_name="retrieval",
+                category="retrieval",
+                input_payload={"query": query, "top_k": top_k},
+                output_summary=f"hits={len(payload)}",
+                status="ok" if payload else "degraded",
+            )
+            return payload
         except Exception as e:
             logger.error('Vector search error: %s', e)
+            await record_timed_tool_call(
+                "vector_search",
+                started_at=started,
+                node_name="retrieval",
+                category="retrieval",
+                input_payload={"query": query, "top_k": top_k},
+                output_summary=str(e),
+                status="degraded",
+            )
             return []
 
     def count(self) -> int:
@@ -133,6 +187,28 @@ class VectorIndex:
             return Collection(self.COLLECTION_NAME).num_entities
         except Exception:
             return 0
+
+    async def health(self) -> Dict[str, Any]:
+        try:
+            from pymilvus import Collection, utility, connections
+
+            connections.connect(host=self.host, port=self.port)
+            has_collection = utility.has_collection(self.COLLECTION_NAME)
+            count = Collection(self.COLLECTION_NAME).num_entities if has_collection else 0
+            return {
+                "status": "ok",
+                "count": count,
+                "host": self.host,
+                "port": self.port,
+            }
+        except Exception as exc:
+            return {
+                "status": "degraded",
+                "count": 0,
+                "host": self.host,
+                "port": self.port,
+                "reason": str(exc),
+            }
 
 
 # ---------------------------------------------------------------------------
