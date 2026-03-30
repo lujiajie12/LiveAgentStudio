@@ -130,6 +130,38 @@ class AgentPreferenceORM(Base):
     )
 
 
+class LiveBarrageEventORM(Base):
+    __tablename__ = "live_barrage_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column(String(36), index=True)
+    user_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    display_name: Mapped[str] = mapped_column(String(255))
+    text: Mapped[str] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(String(64), default="simulator", index=True)
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class TeleprompterItemORM(Base):
+    __tablename__ = "teleprompter_items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    session_id: Mapped[str] = mapped_column(String(36), index=True)
+    title: Mapped[str] = mapped_column(String(255))
+    content: Mapped[str] = mapped_column(Text)
+    source_agent: Mapped[str] = mapped_column(String(64), default="qa", index=True)
+    priority: Mapped[str] = mapped_column(String(32), default="normal", index=True)
+    metadata_json: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        index=True,
+    )
+
+
 class RagOfflineJobORM(Base):
     __tablename__ = "rag_offline_jobs"
 

@@ -6,8 +6,8 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from app.repositories.base import MessageRepository, SessionRepository, ToolCallLogRepository
-from app.schemas.domain import MessageRecord, MessageRole, ToolCallLogRecord
+from app.repositories.base import LiveBarrageEventRepository, MessageRepository, SessionRepository, ToolCallLogRepository
+from app.schemas.domain import LiveBarrageEventRecord, MessageRecord, MessageRole, ToolCallLogRecord
 from app.services.memory_service import MemoryService
 
 
@@ -21,11 +21,13 @@ class OpsService:
         memory_service: MemoryService,
         message_repository: MessageRepository,
         session_repository: SessionRepository,
+        barrage_repository: LiveBarrageEventRepository,
     ):
         self.tool_log_repository = tool_log_repository
         self.memory_service = memory_service
         self.message_repository = message_repository
         self.session_repository = session_repository
+        self.barrage_repository = barrage_repository
 
     async def list_recent_traces(self, limit: int = 20) -> list[dict[str, Any]]:
         """按 trace 聚合最近的工具调用，供 Agent Flow 和首页状态条使用。"""
@@ -88,9 +90,8 @@ class OpsService:
     async def get_priority_queue(self, session_id: str, limit: int = 3) -> list[dict[str, Any]]:
         """对当前会话里的用户问题做轻量聚类，产出高优意图卡片。"""
 
-        messages = await self.message_repository.list_by_session(session_id)
-        user_messages = [item for item in messages if item.role == MessageRole.user and item.content.strip()]
-        cards = self._build_priority_cards(user_messages)
+        barrages = await self.barrage_repository.list_recent_by_session(session_id, limit=120)
+        cards = self._build_priority_cards(list(reversed(barrages)))
         if not cards:
             cards = self._build_fallback_priority_cards()
         return cards[:limit]
@@ -152,12 +153,12 @@ class OpsService:
             "message": "已接收 TTS 插播请求，前端可直接使用浏览器语音播报。",
         }
 
-    def _build_priority_cards(self, messages: list[MessageRecord]) -> list[dict[str, Any]]:
+    def _build_priority_cards(self, messages: list[LiveBarrageEventRecord]) -> list[dict[str, Any]]:
         counts: Counter[str] = Counter()
-        latest_by_key: dict[str, MessageRecord] = {}
+        latest_by_key: dict[str, LiveBarrageEventRecord] = {}
 
         for message in messages:
-            key = self._normalize_priority_key(message.content)
+            key = self._normalize_priority_key(message.text)
             if not key:
                 continue
             counts[key] += 1
@@ -165,11 +166,11 @@ class OpsService:
 
         ordered: list[dict[str, Any]] = []
         for message in sorted(latest_by_key.values(), key=lambda item: item.created_at, reverse=True):
-            key = self._normalize_priority_key(message.content)
+            key = self._normalize_priority_key(message.text)
             if not key:
                 continue
-            label, tone, recommended_intent = self._classify_priority(message.content)
-            summary = f"请帮我处理这个直播间问题：{message.content.strip()}"
+            label, tone, recommended_intent = self._classify_priority(message.text)
+            summary = f"请帮我处理这个直播间问题：{message.text.strip()}"
             ordered.append(
                 {
                     "id": f"priority-{message.id}",

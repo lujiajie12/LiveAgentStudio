@@ -9,10 +9,12 @@ from app.models import (
     AgentPreferenceORM,
     HighFrequencyQuestionORM,
     KnowledgeDocumentORM,
+    LiveBarrageEventORM,
     MessageORM,
     RagOfflineJobORM,
     ReportORM,
     SessionORM,
+    TeleprompterItemORM,
     ToolCallLogORM,
     UserORM,
 )
@@ -20,10 +22,12 @@ from app.repositories.base import (
     AgentPreferenceRepository,
     HighFrequencyQuestionRepository,
     KnowledgeRepository,
+    LiveBarrageEventRepository,
     MessageRepository,
     RagOfflineJobRepository,
     ReportRepository,
     SessionRepository,
+    TeleprompterItemRepository,
     ToolCallLogRepository,
     UserRepository,
 )
@@ -31,10 +35,12 @@ from app.schemas.domain import (
     AgentPreferenceRecord,
     HighFrequencyQuestionRecord,
     KnowledgeDocumentRecord,
+    LiveBarrageEventRecord,
     MessageRecord,
     RagOfflineJobRecord,
     ReportRecord,
     SessionRecord,
+    TeleprompterItemRecord,
     ToolCallLogRecord,
     UserRecord,
 )
@@ -145,6 +151,33 @@ def _preference_record(item: AgentPreferenceORM) -> AgentPreferenceRecord:
         script_style=item.script_style,
         custom_sensitive_terms=item.custom_sensitive_terms or [],
         metadata=item.metadata_json or {},
+        updated_at=item.updated_at,
+    )
+
+
+def _live_barrage_record(item: LiveBarrageEventORM) -> LiveBarrageEventRecord:
+    return LiveBarrageEventRecord(
+        id=item.id,
+        session_id=item.session_id,
+        user_id=item.user_id,
+        display_name=item.display_name,
+        text=item.text,
+        source=item.source,
+        metadata=item.metadata_json or {},
+        created_at=item.created_at,
+    )
+
+
+def _teleprompter_record(item: TeleprompterItemORM) -> TeleprompterItemRecord:
+    return TeleprompterItemRecord(
+        id=item.id,
+        session_id=item.session_id,
+        title=item.title,
+        content=item.content,
+        source_agent=item.source_agent,
+        priority=item.priority,
+        metadata=item.metadata_json or {},
+        created_at=item.created_at,
         updated_at=item.updated_at,
     )
 
@@ -479,6 +512,72 @@ class SQLAlchemyAgentPreferenceRepository(AgentPreferenceRepository):
             session.commit()
             session.refresh(item)
             return _preference_record(item)
+
+
+class SQLAlchemyLiveBarrageEventRepository(LiveBarrageEventRepository):
+    def __init__(self, session_factory: SessionFactory):
+        self.session_factory = session_factory
+
+    async def create(self, record: LiveBarrageEventRecord) -> LiveBarrageEventRecord:
+        with self.session_factory() as session:
+            item = LiveBarrageEventORM(
+                id=record.id,
+                session_id=record.session_id,
+                user_id=record.user_id,
+                display_name=record.display_name,
+                text=record.text,
+                source=record.source,
+                metadata_json=record.metadata or {},
+                created_at=record.created_at,
+            )
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            return _live_barrage_record(item)
+
+    async def list_recent_by_session(self, session_id: str, limit: int = 50) -> list[LiveBarrageEventRecord]:
+        with self.session_factory() as session:
+            items = (
+                session.query(LiveBarrageEventORM)
+                .filter(LiveBarrageEventORM.session_id == session_id)
+                .order_by(desc(LiveBarrageEventORM.created_at))
+                .limit(limit)
+                .all()
+            )
+            return [_live_barrage_record(item) for item in items]
+
+
+class SQLAlchemyTeleprompterItemRepository(TeleprompterItemRepository):
+    def __init__(self, session_factory: SessionFactory):
+        self.session_factory = session_factory
+
+    async def create(self, record: TeleprompterItemRecord) -> TeleprompterItemRecord:
+        with self.session_factory() as session:
+            item = TeleprompterItemORM(
+                id=record.id,
+                session_id=record.session_id,
+                title=record.title,
+                content=record.content,
+                source_agent=record.source_agent,
+                priority=record.priority,
+                metadata_json=record.metadata or {},
+                created_at=record.created_at,
+                updated_at=record.updated_at,
+            )
+            session.add(item)
+            session.commit()
+            session.refresh(item)
+            return _teleprompter_record(item)
+
+    async def get_latest_by_session(self, session_id: str) -> TeleprompterItemRecord | None:
+        with self.session_factory() as session:
+            item = (
+                session.query(TeleprompterItemORM)
+                .filter(TeleprompterItemORM.session_id == session_id)
+                .order_by(desc(TeleprompterItemORM.updated_at), desc(TeleprompterItemORM.created_at))
+                .first()
+            )
+            return _teleprompter_record(item) if item else None
 
 
 class SQLAlchemyRagOfflineJobRepository(RagOfflineJobRepository):

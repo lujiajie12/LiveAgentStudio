@@ -232,3 +232,126 @@ def test_rag_management_endpoints(client, auth_headers):
     job_detail_response = client.get("/api/v1/rag/offline/jobs/job-001", headers=auth_headers)
     assert job_detail_response.status_code == 200
     assert job_detail_response.json()["data"]["log_tail"] == ["done"]
+
+
+def test_live_barrage_and_teleprompter_endpoints(client, auth_headers):
+    token = auth_headers["Authorization"].split(" ", 1)[1]
+    session_id = "studio-live-room-001"
+
+    first_ingest = client.post(
+        "/api/v1/live/barrages/ingest",
+        json={
+            "session_id": session_id,
+            "display_name": "User_101",
+            "user_id": "user-101",
+            "text": "今天这场直播主推什么？",
+            "source": "simulator",
+            "current_product_id": "SKU-001",
+            "live_stage": "intro",
+            "online_viewers": 12345,
+            "conversion_rate": 3.24,
+            "interaction_rate": 7.8,
+        },
+        headers=auth_headers,
+    )
+    assert first_ingest.status_code == 200
+    assert first_ingest.json()["data"]["text"] == "今天这场直播主推什么？"
+
+    overview_response = client.get(
+        "/api/v1/live/overview",
+        params={"session_id": session_id},
+        headers=auth_headers,
+    )
+    assert overview_response.status_code == 200
+    overview = overview_response.json()["data"]
+    assert overview["current_product_id"] == "SKU-001"
+    assert "agent_status_summary" in overview
+
+    with client.websocket_connect(
+        f"/api/v1/live/barrages/stream?session_id={session_id}&token={token}"
+    ) as websocket:
+        snapshot = websocket.receive_json()
+        assert snapshot["type"] == "snapshot"
+        assert snapshot["items"]
+
+        stream_overview = websocket.receive_json()
+        assert stream_overview["type"] == "overview"
+
+        client.post(
+            "/api/v1/live/barrages/ingest",
+            json={
+                "session_id": session_id,
+                "display_name": "User_202",
+                "user_id": "user-202",
+                "text": "这款产品适合什么家庭使用？",
+                "source": "simulator",
+                "current_product_id": "SKU-001",
+                "live_stage": "pitch",
+                "online_viewers": 12520,
+                "conversion_rate": 3.36,
+                "interaction_rate": 8.1,
+            },
+            headers=auth_headers,
+        )
+
+        barrage_event = websocket.receive_json()
+        assert barrage_event["type"] == "barrage"
+        assert barrage_event["item"]["text"] == "这款产品适合什么家庭使用？"
+
+        overview_event = websocket.receive_json()
+        assert overview_event["type"] == "overview"
+
+    priority_queue = client.get(
+        "/api/v1/ops/priority-queue",
+        params={"session_id": session_id},
+        headers=auth_headers,
+    )
+    assert priority_queue.status_code == 200
+    prompts = [item["prompt"] for item in priority_queue.json()["data"]]
+    assert any("今天这场直播主推什么" in prompt or "适合什么家庭使用" in prompt for prompt in prompts)
+
+    push_response = client.post(
+        "/api/v1/teleprompter/push",
+        json={
+            "session_id": session_id,
+            "title": "RAG 知识 Agent",
+            "content": "今天主推青岚超净蒸汽拖洗一体机，重点讲适用家庭和清洁效率。",
+            "source_agent": "qa",
+            "priority": "normal",
+        },
+        headers=auth_headers,
+    )
+    assert push_response.status_code == 200
+    pushed = push_response.json()["data"]
+    assert pushed["content"].startswith("今天主推青岚超净蒸汽拖洗一体机")
+
+    current_response = client.get(
+        "/api/v1/teleprompter/current",
+        params={"session_id": session_id},
+        headers=auth_headers,
+    )
+    assert current_response.status_code == 200
+    assert current_response.json()["data"]["title"] == "RAG 知识 Agent"
+
+    with client.websocket_connect(
+        f"/api/v1/teleprompter/stream?session_id={session_id}&token={token}"
+    ) as websocket:
+        snapshot = websocket.receive_json()
+        assert snapshot["type"] == "snapshot"
+        assert snapshot["item"]["title"] == "RAG 知识 Agent"
+
+        client.post(
+            "/api/v1/teleprompter/push",
+            json={
+                "session_id": session_id,
+                "title": "运营控场编排",
+                "content": "库存紧张，马上切促单节奏，提醒用户点购物袋下单。",
+                "source_agent": "ops",
+                "priority": "high",
+            },
+            headers=auth_headers,
+        )
+
+        teleprompter_event = websocket.receive_json()
+        assert teleprompter_event["type"] == "teleprompter"
+        assert teleprompter_event["item"]["source_agent"] == "ops"

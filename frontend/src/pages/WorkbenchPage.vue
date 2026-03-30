@@ -15,15 +15,11 @@
         <section class="studio-v2__sidebar-section">
           <header class="studio-v2__section-header">
             <p class="panel__eyebrow">Live</p>
-            <h2>直播大盘（LIVE）</h2>
+            <h2>直播大盘 (LIVE)</h2>
           </header>
 
           <div class="studio-v2__metric-list">
-            <article
-              v-for="item in workspace.topMetrics"
-              :key="item.key"
-              class="studio-v2__metric"
-            >
+            <article v-for="item in workspace.topMetrics" :key="item.key" class="studio-v2__metric">
               <div class="studio-v2__metric-label">
                 <AppIcon :name="item.icon" :size="14" />
                 <span>{{ item.label }}</span>
@@ -66,11 +62,7 @@
           </header>
 
           <div class="studio-v2__agent-list">
-            <article
-              v-for="agent in workspace.agentStatuses"
-              :key="agent.key"
-              class="studio-v2__agent-item"
-            >
+            <article v-for="agent in workspace.agentStatuses" :key="agent.key" class="studio-v2__agent-item">
               <div class="studio-v2__agent-content">
                 <AppIcon :name="agent.icon" :size="15" />
                 <div>
@@ -100,7 +92,7 @@
           <header class="studio-v2__intent-header">
             <div class="studio-v2__intent-title">
               <AppIcon name="flame" :size="16" />
-              <strong>高优意图捕捉（AI过滤）</strong>
+              <strong>高优意图捕捉 (AI过滤)</strong>
             </div>
             <span class="studio-v2__intent-badge">{{ workspace.priorityCards.length }} 待处理</span>
           </header>
@@ -134,7 +126,7 @@
             </article>
 
             <article v-if="!workspace.priorityCards.length" class="studio-v2__intent-card studio-v2__intent-card--empty">
-              <p>当前没有待处理的高优意图。发送新问题后，AI 会自动把关键问题聚合到这里。</p>
+              <p>当前没有待处理的高优意图。真实弹幕接入后，系统会自动把高频问题聚合到这里。</p>
             </article>
           </div>
         </article>
@@ -143,18 +135,18 @@
           <header class="studio-v2__raw-header">
             <div class="studio-v2__intent-title">
               <AppIcon name="message-square" :size="14" />
-              <strong>原始弹幕流（Raw Stream）</strong>
+              <strong>原始弹幕流 (Raw Stream)</strong>
             </div>
           </header>
 
           <div class="studio-v2__raw-list">
-            <article
-              v-for="item in workspace.rawBarrages"
-              :key="item.id"
-              class="studio-v2__raw-item"
-            >
+            <article v-for="item in workspace.rawBarrages" :key="item.id" class="studio-v2__raw-item">
               <span class="studio-v2__raw-user">{{ item.user }}</span>
               <span class="studio-v2__raw-text">{{ item.text }}</span>
+            </article>
+            <article v-if="!workspace.rawBarrages.length" class="studio-v2__raw-item">
+              <span class="studio-v2__raw-user">System</span>
+              <span class="studio-v2__raw-text">等待弹幕流接入...</span>
             </article>
             <div ref="barrageEndRef"></div>
           </div>
@@ -165,7 +157,7 @@
         <header class="studio-v2__main-header">
           <div>
             <p class="panel__eyebrow">AI Action Center</p>
-            <h2>智能编排与输出生成（AI Action Center）</h2>
+            <h2>智能编排与输出生成 (AI Action Center)</h2>
           </div>
           <div class="studio-v2__main-status">
             <span class="status-chip">
@@ -176,6 +168,10 @@
               <AppIcon name="mic" :size="14" />
               TTS 通道待命
             </span>
+            <button type="button" class="status-chip" @click="openTeleprompterPreview">
+              <AppIcon name="monitor-up" :size="14" />
+              打开提词器
+            </button>
           </div>
         </header>
 
@@ -220,7 +216,12 @@
                   <AppIcon name="mic" :size="14" />
                   TTS 语音插播
                 </button>
-                <button type="button" class="studio-v2__primary-button" disabled>
+                <button
+                  type="button"
+                  class="studio-v2__primary-button"
+                  :disabled="workspace.teleprompterBusyKeys.includes(card.key)"
+                  @click="pushCardToTeleprompter(card)"
+                >
                   <AppIcon name="monitor-up" :size="14" />
                   推送至前方提词器
                 </button>
@@ -237,7 +238,7 @@
                     v-model="commandInput"
                     type="text"
                     :disabled="workspace.isStreaming"
-                    placeholder="输入高频问题或场控指令...（例如：请帮我处理这个直播间问题：今天这场直播主推什么？）"
+                    placeholder="输入高优问题或场控指令…（例如：请帮我处理这个直播间问题：今天这场直播主推什么？）"
                     @keydown.enter.prevent="submitCommand"
                   />
                   <button
@@ -249,7 +250,9 @@
                     <AppIcon name="send" :size="18" />
                   </button>
                 </div>
-                <p class="studio-v2__command-hint">点左侧高优问题一键填入，再在这里发送；RAG 结果会直接回流到当前卡片。</p>
+                <p class="studio-v2__command-hint">
+                  点左侧高优问题一键填入，再在这里发送；RAG 结果会直接回流到当前卡片。
+                </p>
                 <p v-if="workspace.error" class="error-text">{{ workspace.error }}</p>
               </div>
             </template>
@@ -306,7 +309,8 @@
                   <button
                     type="button"
                     class="studio-v2__primary-button studio-v2__primary-button--danger"
-                    disabled
+                    :disabled="workspace.teleprompterBusyKeys.includes(card.key)"
+                    @click="pushCardToTeleprompter(card)"
                   >
                     <AppIcon name="monitor-up" :size="14" />
                     紧急下发补救
@@ -360,6 +364,15 @@
                 <button type="button" class="studio-v2__ghost-button" @click="workspace.dismissAction(card.key)">
                   暂不干预
                 </button>
+                <button
+                  type="button"
+                  class="studio-v2__secondary-button"
+                  :disabled="workspace.teleprompterBusyKeys.includes(card.key)"
+                  @click="pushCardToTeleprompter(card)"
+                >
+                  <AppIcon name="monitor-up" :size="14" />
+                  推送提词器
+                </button>
                 <button type="button" class="studio-v2__primary-button studio-v2__primary-button--warning" @click="executeOpsPlan(card)">
                   执行方案 {{ selectedPlans[card.key] || 'A' }}
                   <AppIcon name="chevron-right" :size="14" />
@@ -368,7 +381,6 @@
             </template>
           </article>
         </section>
-
       </main>
     </div>
   </section>
@@ -405,7 +417,7 @@ function getOpsPlans(card) {
     : [
         {
           id: 'A',
-          title: '方案 A：紧急逼单',
+          title: '方案 A：维持当前节奏',
           summary: card.content,
           prompt: card.content
         }
@@ -430,6 +442,48 @@ async function playTts(card) {
   await workspace.playTts(card.key, text)
 }
 
+function buildTeleprompterPayload(card) {
+  if (card.key === 'ops') {
+    const plans = getOpsPlans(card)
+    const selected = plans.find((item) => item.id === selectedPlans[card.key]) || plans[0]
+    return {
+      title: `${card.title} · ${selected?.title || '策略建议'}`,
+      content: selected?.prompt || selected?.summary || editorDrafts[card.key] || card.content,
+      source_agent: 'ops',
+      priority: 'high',
+      metadata: {
+        trigger: card.metadata?.trigger || 'strategy'
+      }
+    }
+  }
+
+  if (card.key === 'guardrail') {
+    return {
+      title: `${card.title} · 紧急补救`,
+      content: editorDrafts[card.key] ?? card.content,
+      source_agent: 'guardrail',
+      priority: 'urgent',
+      metadata: {
+        rule: card.metadata?.rule || card.detail
+      }
+    }
+  }
+
+  return {
+    title: `${card.title} · ${card.subtitle}`,
+    content: editorDrafts[card.key] ?? card.content,
+    source_agent: 'qa',
+    priority: 'normal',
+    metadata: {
+      references: card.references || []
+    }
+  }
+}
+
+async function pushCardToTeleprompter(card) {
+  await workspace.pushTeleprompter(card.key, buildTeleprompterPayload(card))
+}
+
 async function executeOpsPlan(card) {
   const plans = getOpsPlans(card)
   const selected = plans.find((item) => item.id === selectedPlans[card.key]) || plans[0]
@@ -441,6 +495,10 @@ async function executeOpsPlan(card) {
 
 async function selectSession(sessionId) {
   await workspace.loadMessages(sessionId)
+}
+
+function openTeleprompterPreview() {
+  workspace.openTeleprompterPreview()
 }
 
 async function scrollBarrages() {

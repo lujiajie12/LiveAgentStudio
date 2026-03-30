@@ -5,10 +5,12 @@ from app.schemas.domain import (
     AgentPreferenceRecord,
     HighFrequencyQuestionRecord,
     KnowledgeDocumentRecord,
+    LiveBarrageEventRecord,
     MessageRecord,
     RagOfflineJobRecord,
     ReportRecord,
     SessionRecord,
+    TeleprompterItemRecord,
     ToolCallLogRecord,
     UserRecord,
 )
@@ -120,6 +122,26 @@ class AgentPreferenceRepository(ABC):
 
     @abstractmethod
     async def save(self, record: AgentPreferenceRecord) -> AgentPreferenceRecord:
+        raise NotImplementedError
+
+
+class LiveBarrageEventRepository(ABC):
+    @abstractmethod
+    async def create(self, record: LiveBarrageEventRecord) -> LiveBarrageEventRecord:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def list_recent_by_session(self, session_id: str, limit: int = 50) -> list[LiveBarrageEventRecord]:
+        raise NotImplementedError
+
+
+class TeleprompterItemRepository(ABC):
+    @abstractmethod
+    async def create(self, record: TeleprompterItemRecord) -> TeleprompterItemRecord:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def get_latest_by_session(self, session_id: str) -> TeleprompterItemRecord | None:
         raise NotImplementedError
 
 

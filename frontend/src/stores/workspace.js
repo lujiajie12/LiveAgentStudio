@@ -3,24 +3,19 @@ import { defineStore } from 'pinia'
 import { streamChat } from '@/api/chat'
 import {
   broadcastStudioTts,
+  buildStudioBarrageWsUrl,
   fetchStudioActionCenter,
+  fetchStudioLiveOverview,
   fetchStudioMessages,
   fetchStudioPriorityQueue,
   fetchStudioSystemHealth,
   fetchStudioSystemMetrics,
-  fetchStudioTraces
+  fetchStudioTraces,
+  pushStudioTeleprompter
 } from '@/api/studio'
 import { readStudioToken, readStudioUser } from '@/utils/studioAuth'
 
-const BARRAGE_SAMPLES = [
-  '运费谁出？',
-  '今天这场直播主推什么？',
-  '这款适合什么家庭用？',
-  '还能不能便宜点？',
-  '现在下单多久发货？',
-  '有其他颜色吗？',
-  '库存还够吗？'
-]
+const DEFAULT_SESSION_ID = 'studio-live-room-001'
 
 function stageLabel(stage) {
   return (
@@ -34,9 +29,8 @@ function stageLabel(stage) {
 }
 
 function createLiveSession() {
-  const sessionId = `studio-live-${Date.now()}`
   return {
-    id: sessionId,
+    id: DEFAULT_SESSION_ID,
     title: '当前直播会话',
     subtitle: `SKU-001 · ${stageLabel('intro')}`,
     current_product_id: 'SKU-001',
@@ -48,7 +42,6 @@ function createLiveSession() {
 function createHistorySessions(traces, activeSessionId) {
   const sessions = []
   const seen = new Set([activeSessionId])
-
   for (const trace of traces || []) {
     if (!trace.session_id || seen.has(trace.session_id)) {
       continue
@@ -66,18 +59,42 @@ function createHistorySessions(traces, activeSessionId) {
       break
     }
   }
-
   return sessions
 }
 
-function createInitialBarrages() {
-  return [
-    { id: 'seed-1', user: 'User_882', text: '1号链接还有吗？' },
-    { id: 'seed-2', user: '小透明', text: '主播多高多重？' },
-    { id: 'seed-3', user: '李**', text: '刚拍了，快发货！' },
-    { id: 'seed-4', user: '购物狂', text: '质量怎么样啊？' },
-    { id: 'seed-5', user: 'AAA建材', text: '66666' }
-  ]
+function defaultOverview() {
+  return {
+    session_id: DEFAULT_SESSION_ID,
+    online_viewers: 0,
+    current_product_id: 'SKU-001',
+    live_stage: 'intro',
+    interaction_rate: 0,
+    conversion_rate: 0,
+    conversion_rate_estimated: true,
+    agent_status_summary: [
+      {
+        key: 'qa',
+        label: 'RAG 知识答疑',
+        detail: '等待新请求',
+        icon: 'bot',
+        status: 'idle'
+      },
+      {
+        key: 'guardrail',
+        label: '实时风控与拦截',
+        detail: '拦截 0 次',
+        icon: 'shield-alert',
+        status: 'idle'
+      },
+      {
+        key: 'ops',
+        label: '运营控场编排',
+        detail: '等待直播事件',
+        icon: 'activity',
+        status: 'idle'
+      }
+    ]
+  }
 }
 
 function defaultActionCards() {
@@ -104,7 +121,11 @@ function defaultActionCards() {
       content: '当前暂无风控记录。发送一条请求后，这里会展示最近一次合规校验结果和拦截说明。',
       detail: '等待新的输出结果',
       references: [],
-      metadata: {}
+      metadata: {
+        severity: 'safe',
+        rule: '暂无触发规则',
+        original_text: ''
+      }
     },
     ops: {
       key: 'ops',
@@ -113,18 +134,26 @@ function defaultActionCards() {
       tone: 'yellow',
       status: 'idle',
       editable: true,
-      content: '当前暂无运营控场建议。可从左侧高优问题区或底部指令栏触发 Script Agent。',
+      content: '当前暂无运营控场建议。可从左侧高优问题区或 RAG 卡片输入框触发 Script Agent。',
       detail: '等待新的控场脚本输出',
       references: [],
-      metadata: {}
+      metadata: {
+        trigger: '策略建议',
+        insight: '当前没有新的运营建议。',
+        plans: [
+          {
+            id: 'A',
+            title: '方案 A：维持当前节奏',
+            summary: '继续观察弹幕和互动走势，等待下一轮事件。',
+            prompt: '帮我生成一段运营控场话术，先保持当前节奏并观察互动变化。'
+          }
+        ]
+      }
     }
   }
 }
 
 function mapIntentToActionKey(intent) {
-  if (intent === 'qa') {
-    return 'qa'
-  }
   if (intent === 'script' || intent === 'analyst') {
     return 'ops'
   }
@@ -191,7 +220,11 @@ function buildGuardrailCardFromMessage(message) {
       content: metadata.guardrail_reason || '命中高风险规则，系统已拦截本次输出。',
       detail: '高风险内容已拦截',
       references: [],
-      metadata
+      metadata: {
+        ...metadata,
+        severity: 'danger',
+        original_text: metadata.original_text || message.content
+      }
     }
   }
 
@@ -206,7 +239,11 @@ function buildGuardrailCardFromMessage(message) {
       content: metadata.guardrail_reason || `检测到 ${violations.join('、')} 等风险点，系统已软处理后放行。`,
       detail: '已做软拦截改写',
       references: [],
-      metadata
+      metadata: {
+        ...metadata,
+        severity: 'warning',
+        original_text: metadata.original_text || message.content
+      }
     }
   }
 
@@ -220,7 +257,20 @@ function buildGuardrailCardFromMessage(message) {
     content: '当前无拦截事件。最近一次输出已通过敏感词、绝对化表达和引用合规校验。',
     detail: '最近一次输出已通过合规校验',
     references: [],
-    metadata
+    metadata: {
+      ...metadata,
+      severity: 'safe',
+      original_text: metadata.original_text || message.content
+    }
+  }
+}
+
+function normalizeBarrage(item) {
+  return {
+    id: item.id,
+    user: item.display_name || item.user || 'User',
+    text: item.text || '',
+    created_at: item.created_at || new Date().toISOString()
   }
 }
 
@@ -243,25 +293,27 @@ function upsertMessages(existing, incoming) {
 export const useWorkspaceStore = defineStore('workspace', {
   state: () => ({
     sessions: [createLiveSession()],
-    activeSessionId: '',
+    activeSessionId: DEFAULT_SESSION_ID,
     messagesBySession: {},
+    overview: defaultOverview(),
     health: null,
     metrics: null,
     traces: [],
     priorityQueue: [],
     actionCenter: defaultActionCards(),
-    rawBarrages: createInitialBarrages(),
-    onlineViewers: 12450,
-    conversionRate: 3.24,
+    rawBarrages: [],
     isStreaming: false,
     error: '',
-    barrageTimerId: null,
     refreshTimerId: null,
+    barrageSocket: null,
+    barrageReconnectTimerId: null,
+    priorityRefreshTimerId: null,
     dismissedPriorityIds: [],
     dismissedActionKeys: [],
     streamingKey: '',
     currentTraceId: '',
-    ttsBusyKeys: []
+    ttsBusyKeys: [],
+    teleprompterBusyKeys: []
   }),
   getters: {
     activeSession(state) {
@@ -271,64 +323,37 @@ export const useWorkspaceStore = defineStore('workspace', {
       return state.messagesBySession[state.activeSessionId] || []
     },
     topMetrics(state) {
-      const current = state.sessions.find((item) => item.id === state.activeSessionId) || state.sessions[0]
-      const nodeP95 = state.metrics?.metrics?.node_p95_ms || {}
       return [
         {
           key: 'viewers',
           label: '在线人数',
-          value: state.onlineViewers.toLocaleString('zh-CN'),
+          value: Number(state.overview.online_viewers || 0).toLocaleString('zh-CN'),
           icon: 'users'
         },
         {
           key: 'product',
           label: '当前讲解',
-          value: current?.current_product_id || 'SKU-001',
+          value: state.overview.current_product_id || 'SKU-001',
           icon: 'shopping-cart'
+        },
+        {
+          key: 'interaction',
+          label: '互动频率',
+          value: `${Number(state.overview.interaction_rate || 0).toFixed(2)}/分钟`,
+          icon: 'activity'
         },
         {
           key: 'conversion',
           label: '转化率',
-          value: `${state.conversionRate.toFixed(2)}%`,
+          value: `${Number(state.overview.conversion_rate || 0).toFixed(2)}%`,
           icon: 'trending-up'
-        },
-        {
-          key: 'qa-p95',
-          label: 'QA P95',
-          value: `${nodeP95.qa || nodeP95.retrieval || 0}ms`,
-          icon: 'activity'
         }
       ]
     },
     agentStatuses(state) {
-      const metrics = state.metrics?.metrics || {}
-      const qaP95 = metrics.node_p95_ms?.qa || metrics.node_p95_ms?.retrieval || 0
-      const interceptCount = metrics.intercept_count || 0
-      const degradedCount = metrics.degraded_count || 0
-
-      return [
-        {
-          key: 'qa',
-          label: 'RAG 知识答疑',
-          detail: `P95 ${qaP95}ms`,
-          icon: 'bot',
-          status: degradedCount ? 'degraded' : 'online'
-        },
-        {
-          key: 'guardrail',
-          label: '实时风控与拦截',
-          detail: `拦截 ${interceptCount} 次`,
-          icon: 'shield-alert',
-          status: 'online'
-        },
-        {
-          key: 'ops',
-          label: '运营控场编排',
-          detail: `最近 ${state.traces.length} 条 trace`,
-          icon: 'activity',
-          status: state.isStreaming ? 'busy' : 'degraded'
-        }
-      ]
+      return state.overview.agent_status_summary?.length
+        ? state.overview.agent_status_summary
+        : defaultOverview().agent_status_summary
     },
     priorityCards(state) {
       return state.priorityQueue.filter((item) => !state.dismissedPriorityIds.includes(item.id))
@@ -349,41 +374,44 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
       return this.activeSession
     },
+    updateLiveSessionFromOverview() {
+      const session = this.ensureLiveSession()
+      session.current_product_id = this.overview.current_product_id || session.current_product_id
+      session.live_stage = this.overview.live_stage || session.live_stage
+      session.subtitle = `${session.current_product_id || 'SKU-001'} · ${stageLabel(session.live_stage)}`
+    },
+    syncSessionsWithTraces() {
+      this.updateLiveSessionFromOverview()
+      const current = this.ensureLiveSession()
+      this.sessions = [current, ...createHistorySessions(this.traces, current.id)]
+    },
     async bootstrap() {
       this.ensureLiveSession()
-      this.startBarrageStream()
+      await this.connectBarrageStream()
       await this.refreshDashboard()
-      if (this.activeSessionId) {
-        await this.loadMessages(this.activeSessionId)
-      }
+      await this.loadMessages(this.activeSessionId)
       this.startAutoRefresh()
     },
     teardown() {
-      if (this.barrageTimerId) {
-        window.clearInterval(this.barrageTimerId)
-        this.barrageTimerId = null
-      }
       if (this.refreshTimerId) {
         window.clearInterval(this.refreshTimerId)
         this.refreshTimerId = null
       }
+      if (this.barrageReconnectTimerId) {
+        window.clearTimeout(this.barrageReconnectTimerId)
+        this.barrageReconnectTimerId = null
+      }
+      if (this.priorityRefreshTimerId) {
+        window.clearTimeout(this.priorityRefreshTimerId)
+        this.priorityRefreshTimerId = null
+      }
+      if (this.barrageSocket) {
+        this.barrageSocket.close()
+        this.barrageSocket = null
+      }
       if (window.speechSynthesis) {
         window.speechSynthesis.cancel()
       }
-    },
-    startBarrageStream() {
-      if (this.barrageTimerId) {
-        window.clearInterval(this.barrageTimerId)
-      }
-      this.barrageTimerId = window.setInterval(() => {
-        const sample = BARRAGE_SAMPLES[Math.floor(Math.random() * BARRAGE_SAMPLES.length)]
-        const next = {
-          id: `barrage-${Date.now()}`,
-          user: `User_${Math.floor(Math.random() * 1000)}`,
-          text: sample
-        }
-        this.rawBarrages = [...this.rawBarrages.slice(-19), next]
-      }, 2200)
     },
     startAutoRefresh() {
       if (this.refreshTimerId) {
@@ -393,14 +421,76 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.refreshDashboard()
       }, 15000)
     },
-    syncSessionsWithTraces() {
-      const current = this.ensureLiveSession()
-      current.subtitle = `${current.current_product_id || 'SKU-001'} · ${stageLabel(current.live_stage)}`
-      this.sessions = [current, ...createHistorySessions(this.traces, current.id)]
+    schedulePriorityRefresh() {
+      if (this.priorityRefreshTimerId) {
+        window.clearTimeout(this.priorityRefreshTimerId)
+      }
+      this.priorityRefreshTimerId = window.setTimeout(async () => {
+        this.priorityRefreshTimerId = null
+        await Promise.allSettled([this.refreshPriorityQueue(), this.refreshOverview()])
+      }, 1200)
+    },
+    async connectBarrageStream() {
+      const session = this.ensureLiveSession()
+      const token = readStudioToken()
+      if (!token) {
+        return
+      }
+
+      if (this.barrageReconnectTimerId) {
+        window.clearTimeout(this.barrageReconnectTimerId)
+        this.barrageReconnectTimerId = null
+      }
+
+      if (this.barrageSocket) {
+        this.barrageSocket.close()
+        this.barrageSocket = null
+      }
+
+      const socket = new WebSocket(buildStudioBarrageWsUrl(session.id, token))
+      this.barrageSocket = socket
+
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data)
+          if (payload.type === 'snapshot') {
+            this.rawBarrages = (payload.items || []).map(normalizeBarrage).slice(-30)
+            return
+          }
+          if (payload.type === 'barrage' && payload.item) {
+            this.rawBarrages = [...this.rawBarrages.slice(-29), normalizeBarrage(payload.item)]
+            this.schedulePriorityRefresh()
+            return
+          }
+          if (payload.type === 'overview' && payload.item) {
+            this.overview = {
+              ...this.overview,
+              ...payload.item
+            }
+            this.syncSessionsWithTraces()
+          }
+        } catch (error) {
+          this.error = error?.message || '弹幕流数据解析失败。'
+        }
+      }
+
+      socket.onclose = () => {
+        if (this.barrageSocket === socket) {
+          this.barrageSocket = null
+        }
+        this.barrageReconnectTimerId = window.setTimeout(() => {
+          this.connectBarrageStream()
+        }, 3000)
+      }
+
+      socket.onerror = () => {
+        this.error = '原始弹幕流连接异常。'
+      }
     },
     async refreshDashboard() {
       const session = this.ensureLiveSession()
       const results = await Promise.allSettled([
+        fetchStudioLiveOverview(session.id),
         fetchStudioSystemHealth(),
         fetchStudioSystemMetrics(),
         fetchStudioTraces(),
@@ -409,19 +499,22 @@ export const useWorkspaceStore = defineStore('workspace', {
       ])
 
       if (results[0].status === 'fulfilled') {
-        this.health = results[0].value
+        this.overview = results[0].value
       }
       if (results[1].status === 'fulfilled') {
-        this.metrics = results[1].value
+        this.health = results[1].value
       }
       if (results[2].status === 'fulfilled') {
-        this.traces = results[2].value
+        this.metrics = results[2].value
       }
       if (results[3].status === 'fulfilled') {
-        this.priorityQueue = results[3].value
+        this.traces = results[3].value
       }
       if (results[4].status === 'fulfilled') {
-        this.applyActionCenterPayload(results[4].value)
+        this.priorityQueue = results[4].value
+      }
+      if (results[5].status === 'fulfilled') {
+        this.applyActionCenterPayload(results[5].value)
       }
 
       this.syncSessionsWithTraces()
@@ -438,7 +531,19 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.activeSessionId = sessionId
       const messages = await fetchStudioMessages(sessionId)
       this.messagesBySession[sessionId] = messages
-      await Promise.allSettled([this.refreshPriorityQueue(), this.refreshActionCenter()])
+      await Promise.allSettled([
+        this.refreshPriorityQueue(),
+        this.refreshActionCenter(),
+        this.refreshOverview(),
+        this.connectBarrageStream()
+      ])
+      this.syncSessionsWithTraces()
+    },
+    async refreshOverview() {
+      if (!this.activeSessionId) {
+        return
+      }
+      this.overview = await fetchStudioLiveOverview(this.activeSessionId)
       this.syncSessionsWithTraces()
     },
     async refreshPriorityQueue() {
@@ -468,16 +573,6 @@ export const useWorkspaceStore = defineStore('workspace', {
     upsertSessionMessages(sessionId, messages) {
       const existing = this.messagesBySession[sessionId] || []
       this.messagesBySession[sessionId] = upsertMessages(existing, messages)
-    },
-    addOperatorBarrage(text) {
-      this.rawBarrages = [
-        ...this.rawBarrages.slice(-19),
-        {
-          id: `operator-${Date.now()}`,
-          user: 'Operator',
-          text
-        }
-      ]
     },
     primeStreamingCard(intent, userInput) {
       const key = mapIntentToActionKey(intent)
@@ -532,7 +627,6 @@ export const useWorkspaceStore = defineStore('workspace', {
       const token = readStudioToken()
       this.error = ''
       this.isStreaming = true
-      this.addOperatorBarrage(content)
 
       const optimisticUserMessage = {
         id: `local-user-${Date.now()}`,
@@ -550,8 +644,8 @@ export const useWorkspaceStore = defineStore('workspace', {
           payload: {
             session_id: session.id,
             user_input: content,
-            current_product_id: session.current_product_id,
-            live_stage: session.live_stage
+            current_product_id: this.overview.current_product_id || session.current_product_id,
+            live_stage: this.overview.live_stage || session.live_stage
           },
           onEvent: (event) => {
             if (event.event === 'meta') {
@@ -559,12 +653,10 @@ export const useWorkspaceStore = defineStore('workspace', {
               this.primeStreamingCard(event.data.intent, content)
               return
             }
-
             if (event.event === 'token') {
               this.appendStreamingChunk(event.data.content || '')
               return
             }
-
             if (event.event === 'final') {
               if (event.data.message) {
                 this.upsertSessionMessages(session.id, [event.data.message])
@@ -572,7 +664,6 @@ export const useWorkspaceStore = defineStore('workspace', {
               }
               return
             }
-
             if (event.event === 'error') {
               this.error = event.data.message || '请求处理失败，请稍后重试。'
             }
@@ -613,6 +704,30 @@ export const useWorkspaceStore = defineStore('workspace', {
       } finally {
         this.ttsBusyKeys = this.ttsBusyKeys.filter((item) => item !== cardKey)
       }
+    },
+    async pushTeleprompter(cardKey, payload) {
+      if (!this.activeSessionId) {
+        return
+      }
+      if (!this.teleprompterBusyKeys.includes(cardKey)) {
+        this.teleprompterBusyKeys = [...this.teleprompterBusyKeys, cardKey]
+      }
+      try {
+        await pushStudioTeleprompter({
+          session_id: this.activeSessionId,
+          ...payload
+        })
+      } catch (error) {
+        this.error = error?.message || '推送提词器失败。'
+      } finally {
+        this.teleprompterBusyKeys = this.teleprompterBusyKeys.filter((item) => item !== cardKey)
+      }
+    },
+    openTeleprompterPreview() {
+      const sessionId = this.activeSessionId || DEFAULT_SESSION_ID
+      window.open(`/teleprompter/${encodeURIComponent(sessionId)}`, '_blank', 'noopener')
     }
   }
 })
+
+export { DEFAULT_SESSION_ID }

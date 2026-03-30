@@ -11,6 +11,7 @@ import RagOnlinePage from '@/pages/RagOnlinePage.vue'
 import ReportsPage from '@/pages/ReportsPage.vue'
 import StudioLoginPage from '@/pages/StudioLoginPage.vue'
 import SystemPage from '@/pages/SystemPage.vue'
+import TeleprompterPage from '@/pages/TeleprompterPage.vue'
 import WorkbenchPage from '@/pages/WorkbenchPage.vue'
 import { hasStudioAuthToken } from '@/utils/studioAuth'
 
@@ -31,6 +32,12 @@ const routes = [
     path: '/studio-v2',
     name: 'studio-v2',
     component: WorkbenchPage,
+    meta: { requiresStudioAuth: true }
+  },
+  {
+    path: '/teleprompter/:sessionId',
+    name: 'teleprompter',
+    component: TeleprompterPage,
     meta: { requiresStudioAuth: true }
   },
   {

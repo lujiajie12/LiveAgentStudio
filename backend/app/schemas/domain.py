@@ -129,6 +129,29 @@ class AgentPreferenceRecord(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
 
+class LiveBarrageEventRecord(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    session_id: str
+    user_id: str | None = None
+    display_name: str
+    text: str
+    source: str = "simulator"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TeleprompterItemRecord(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid4()))
+    session_id: str
+    title: str
+    content: str
+    source_agent: str = "qa"
+    priority: str = "normal"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class RagOfflineJobRecord(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid4()))
     job_type: str

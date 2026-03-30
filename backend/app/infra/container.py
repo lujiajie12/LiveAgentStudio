@@ -16,10 +16,12 @@ from app.repositories.base import (
     AgentPreferenceRepository,
     HighFrequencyQuestionRepository,
     KnowledgeRepository,
+    LiveBarrageEventRepository,
     MessageRepository,
     RagOfflineJobRepository,
     ReportRepository,
     SessionRepository,
+    TeleprompterItemRepository,
     ToolCallLogRepository,
     UserRepository,
 )
@@ -27,10 +29,12 @@ from app.repositories.sqlalchemy import (
     SQLAlchemyAgentPreferenceRepository,
     SQLAlchemyHighFrequencyQuestionRepository,
     SQLAlchemyKnowledgeRepository,
+    SQLAlchemyLiveBarrageEventRepository,
     SQLAlchemyMessageRepository,
     SQLAlchemyRagOfflineJobRepository,
     SQLAlchemyReportRepository,
     SQLAlchemySessionRepository,
+    SQLAlchemyTeleprompterItemRepository,
     SQLAlchemyToolCallLogRepository,
     SQLAlchemyUserRepository,
 )
@@ -39,12 +43,14 @@ from app.services.chat_service import ChatService
 from app.services.guardrail_service import GuardrailService
 from app.services.knowledge_service import KnowledgeService
 from app.services.llm_gateway import OpenAILLMGateway
+from app.services.live_barrage_service import LiveBarrageService
 from app.services.memory_service import MemoryService, build_redis_client
 from app.services.ops_service import OpsService
 from app.services.rag_ops_service import RagOpsService
 from app.services.settings_service import SettingsService
 from app.services.streaming_service import StreamingService
 from app.services.system_service import SystemService
+from app.services.teleprompter_service import TeleprompterService
 
 
 @dataclass
@@ -56,10 +62,12 @@ class AppContainer:
     session_repository: SessionRepository
     message_repository: MessageRepository
     knowledge_repository: KnowledgeRepository
+    live_barrage_repository: LiveBarrageEventRepository
     tool_log_repository: ToolCallLogRepository
     report_repository: ReportRepository
     high_frequency_repository: HighFrequencyQuestionRepository
     agent_preference_repository: AgentPreferenceRepository
+    teleprompter_repository: TeleprompterItemRepository
     rag_job_repository: RagOfflineJobRepository
     auth_service: AuthService
     memory_service: MemoryService
@@ -68,6 +76,8 @@ class AppContainer:
     guardrail_service: GuardrailService
     streaming_service: StreamingService
     system_service: SystemService
+    live_barrage_service: LiveBarrageService
+    teleprompter_service: TeleprompterService
     ops_service: OpsService
     rag_ops_service: RagOpsService
     graph_runtime: GraphRuntime
@@ -88,10 +98,12 @@ def build_container() -> AppContainer:
     session_repository = SQLAlchemySessionRepository(session_factory)
     message_repository = SQLAlchemyMessageRepository(session_factory)
     knowledge_repository = SQLAlchemyKnowledgeRepository(session_factory)
+    live_barrage_repository = SQLAlchemyLiveBarrageEventRepository(session_factory)
     tool_log_repository = SQLAlchemyToolCallLogRepository(session_factory)
     report_repository = SQLAlchemyReportRepository(session_factory)
     high_frequency_repository = SQLAlchemyHighFrequencyQuestionRepository(session_factory)
     agent_preference_repository = SQLAlchemyAgentPreferenceRepository(session_factory)
+    teleprompter_repository = SQLAlchemyTeleprompterItemRepository(session_factory)
     rag_job_repository = SQLAlchemyRagOfflineJobRepository(session_factory)
 
     auth_service = AuthService(user_repository)
@@ -167,11 +179,23 @@ def build_container() -> AppContainer:
         vector_index=vector_index,
         tool_log_repository=tool_log_repository,
     )
+    live_barrage_service = LiveBarrageService(
+        redis_client=redis_client,
+        barrage_repository=live_barrage_repository,
+        session_repository=session_repository,
+        tool_log_repository=tool_log_repository,
+    )
+    teleprompter_service = TeleprompterService(
+        redis_client=redis_client,
+        teleprompter_repository=teleprompter_repository,
+        tool_log_repository=tool_log_repository,
+    )
     ops_service = OpsService(
         tool_log_repository=tool_log_repository,
         memory_service=memory_service,
         message_repository=message_repository,
         session_repository=session_repository,
+        barrage_repository=live_barrage_repository,
     )
     rag_ops_service = RagOpsService(
         retrieval_pipeline=retrieval_pipeline,
@@ -189,10 +213,12 @@ def build_container() -> AppContainer:
         session_repository=session_repository,
         message_repository=message_repository,
         knowledge_repository=knowledge_repository,
+        live_barrage_repository=live_barrage_repository,
         tool_log_repository=tool_log_repository,
         report_repository=report_repository,
         high_frequency_repository=high_frequency_repository,
         agent_preference_repository=agent_preference_repository,
+        teleprompter_repository=teleprompter_repository,
         rag_job_repository=rag_job_repository,
         auth_service=auth_service,
         memory_service=memory_service,
@@ -201,6 +227,8 @@ def build_container() -> AppContainer:
         guardrail_service=guardrail_service,
         streaming_service=streaming_service,
         system_service=system_service,
+        live_barrage_service=live_barrage_service,
+        teleprompter_service=teleprompter_service,
         ops_service=ops_service,
         rag_ops_service=rag_ops_service,
         graph_runtime=graph_runtime,

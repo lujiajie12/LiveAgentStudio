@@ -3396,3 +3396,133 @@ a {
     right: 20px;
   }
 }
+
+.teleprompter-page {
+  min-height: 100vh;
+  padding: 32px;
+  background:
+    radial-gradient(circle at top left, rgba(99, 102, 241, 0.18), transparent 32%),
+    radial-gradient(circle at bottom right, rgba(168, 85, 247, 0.16), transparent 30%),
+    #050816;
+  color: #f8fafc;
+}
+
+.teleprompter-page__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+  margin-bottom: 24px;
+}
+
+.teleprompter-page__eyebrow {
+  margin: 0 0 8px;
+  color: #818cf8;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-size: 0.78rem;
+}
+
+.teleprompter-page__header h1 {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3.6rem);
+  line-height: 1.08;
+}
+
+.teleprompter-page__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.teleprompter-page__chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.48);
+  color: #cbd5e1;
+  font-size: 0.92rem;
+}
+
+.teleprompter-page__chip--agent {
+  border-color: rgba(129, 140, 248, 0.4);
+  color: #c7d2fe;
+}
+
+.teleprompter-page__chip--priority {
+  border-color: rgba(245, 158, 11, 0.35);
+  color: #fcd34d;
+}
+
+.teleprompter-page__body {
+  display: grid;
+  gap: 18px;
+}
+
+.teleprompter-page__card,
+.teleprompter-page__empty {
+  min-height: calc(100vh - 180px);
+  padding: 32px;
+  border-radius: 28px;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(15, 23, 42, 0.68);
+  box-shadow: 0 24px 80px rgba(2, 6, 23, 0.45);
+}
+
+.teleprompter-page__content {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: clamp(2rem, 3vw, 3.4rem);
+  line-height: 1.6;
+  font-family: inherit;
+}
+
+.teleprompter-page__footer {
+  margin-top: 24px;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: #94a3b8;
+  font-size: 0.95rem;
+}
+
+.teleprompter-page__empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  font-size: 1.2rem;
+}
+
+.teleprompter-page__error {
+  margin: 0;
+  color: #fca5a5;
+}
+
+@media (max-width: 900px) {
+  .teleprompter-page {
+    padding: 20px;
+  }
+
+  .teleprompter-page__header {
+    flex-direction: column;
+  }
+
+  .teleprompter-page__meta {
+    justify-content: flex-start;
+  }
+
+  .teleprompter-page__card,
+  .teleprompter-page__empty {
+    min-height: calc(100vh - 220px);
+    padding: 22px;
+  }
+
+  .teleprompter-page__footer {
+    flex-direction: column;
+  }
+}
