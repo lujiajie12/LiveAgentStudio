@@ -17,4 +17,4 @@ class ErrorResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
-    services: dict[str, str] = Field(default_factory=dict)
+    services: dict[str, Any] = Field(default_factory=dict)

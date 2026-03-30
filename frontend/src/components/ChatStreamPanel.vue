@@ -1,47 +1,68 @@
 <template>
-  <section class="panel panel--chat">
-    <header class="panel__header">
+  <section class="studio-chat">
+    <header class="studio-chat__header">
       <div>
         <p class="panel__eyebrow">Realtime</p>
-        <h2>问答流</h2>
+        <h2 class="studio-chat__title">
+          <AppIcon name="activity" :size="18" />
+          <span>直播协同流</span>
+        </h2>
       </div>
-      <span v-if="isStreaming" class="status-pill">Streaming</span>
+      <span v-if="isStreaming" class="status-pill status-pill--live">Streaming</span>
     </header>
 
-    <div class="message-list">
+    <div class="studio-chat__messages">
       <article
         v-for="message in messages"
         :key="message.id"
-        class="message"
-        :class="`message--${message.role}`"
+        class="message-row"
+        :class="{ 'message-row--user': message.role === 'user' }"
       >
-        <small>{{ message.role }}</small>
-        <p>{{ message.content }}</p>
+        <div class="message-avatar" :class="`message-avatar--${message.role}`">
+          <AppIcon :name="message.role === 'user' ? 'user' : 'bot'" :size="16" />
+        </div>
+        <div class="message-bubble" :class="`message-bubble--${message.role}`">
+          <p>{{ message.content }}</p>
+        </div>
       </article>
-      <article v-if="streamBuffer" class="message message--assistant message--streaming">
-        <small>assistant</small>
-        <p>{{ streamBuffer }}</p>
+
+      <article v-if="streamBuffer" class="message-row">
+        <div class="message-avatar message-avatar--assistant">
+          <AppIcon name="bot" :size="16" />
+        </div>
+        <div class="message-bubble message-bubble--assistant message-bubble--streaming">
+          <p>{{ streamBuffer }}</p>
+        </div>
       </article>
+
+      <div ref="messagesEndRef"></div>
     </div>
 
-    <form class="composer" @submit.prevent="submit">
-      <textarea
-        v-model="draft"
-        rows="4"
-        placeholder="输入用户问题、话术需求或直播复盘请求"
-      />
-      <div class="composer__footer">
-        <p v-if="error" class="error-text">{{ error }}</p>
-        <button class="primary-button" :disabled="isStreaming || !draft.trim()" type="submit">
-          发送
+    <div class="studio-chat__composer">
+      <form class="composer-shell" @submit.prevent="submit">
+        <input
+          v-model="draft"
+          type="text"
+          placeholder="输入观众问题，或主播/场控/运营指令..."
+          class="composer-shell__input"
+        />
+        <button
+          class="composer-shell__send"
+          :disabled="isStreaming || !draft.trim()"
+          type="submit"
+        >
+          <AppIcon name="send" :size="16" />
         </button>
-      </div>
-    </form>
+      </form>
+      <p v-if="error" class="error-text">{{ error }}</p>
+    </div>
   </section>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { nextTick, ref, watch } from 'vue'
+
+import AppIcon from '@/components/AppIcon.vue'
 
 const props = defineProps({
   messages: {
@@ -64,9 +85,26 @@ const props = defineProps({
 
 const emit = defineEmits(['send'])
 const draft = ref('')
+const messagesEndRef = ref(null)
+
+async function scrollToBottom() {
+  await nextTick()
+  messagesEndRef.value?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+}
+
+watch(
+  () => [props.messages.length, props.streamBuffer],
+  () => {
+    scrollToBottom()
+  }
+)
 
 function submit() {
-  emit('send', draft.value)
+  const value = draft.value.trim()
+  if (!value) {
+    return
+  }
+  emit('send', value)
   draft.value = ''
 }
 </script>

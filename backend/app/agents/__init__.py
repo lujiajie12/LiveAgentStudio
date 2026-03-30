@@ -1,4 +1,7 @@
-from app.agents.base import BaseAgent
-from app.agents.router import RouterAgent
+"""Agents package.
 
-__all__ = ["BaseAgent", "RouterAgent"]
+Avoid eager submodule imports here; import concrete modules directly where
+needed to prevent circular imports at startup.
+"""
+
+__all__: list[str] = []

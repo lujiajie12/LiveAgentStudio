@@ -23,7 +23,7 @@ async def stream_chat(
     async def event_generator():
         try:
             result, assistant_message = await container.chat_service.run_chat(
-                payload, current_user.id, trace_id
+                payload, current_user.id, trace_id, current_user.role.value
             )
             yield format_sse_event(
                 ChatEvent(
