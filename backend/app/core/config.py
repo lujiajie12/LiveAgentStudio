@@ -62,6 +62,7 @@ class AppSettings(BaseSettings):
     EMBEDDING_BATCH_SIZE: int = 64
 
     DASHSCOPE_API_KEY: Optional[str] = None
+    SERPAPI_API_KEY: Optional[str] = None
 
     SSE_EVENT_DELAY_MS: int = 15
     CHAT_TOKEN_CHUNK_SIZE: int = 12
