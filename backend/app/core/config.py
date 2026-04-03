@@ -56,9 +56,9 @@ class AppSettings(BaseSettings):
     ES_HOST: str = "localhost"
     ES_PORT: int = 9200
 
-    EMBEDDING_MODEL: str = "G:/LLM/Local_model/BAAI/bge-large-zh-v1___5"
+    EMBEDDING_MODEL: str = "/Volumes/App/LocalModel/BAAI/bge-m3"
     EMBEDDING_DIM: int = 1024
-    EMBEDDING_DEVICE: str = "cuda"
+    EMBEDDING_DEVICE: str = "mps" # "cpu", "cuda", "mps"
     EMBEDDING_BATCH_SIZE: int = 64
 
     DASHSCOPE_API_KEY: Optional[str] = None

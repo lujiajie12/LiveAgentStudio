@@ -14,7 +14,7 @@ os.environ["REDIS_URL"] = "memory://local"
 os.environ.setdefault("LLM_API_KEY", "")
 os.environ.setdefault("OPENAI_API_KEY", "")
 
-from app.main import app
+from backend.app.main import app
 
 
 @pytest.fixture

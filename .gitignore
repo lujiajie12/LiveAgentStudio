@@ -25,6 +25,9 @@ dist/
 .pytest_cache/
 .coverage
 htmlcov/
+tests/
 
 postgres_data/
 redis_data/
+
+SKILL.md

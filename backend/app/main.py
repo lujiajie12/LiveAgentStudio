@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import router as api_router
@@ -37,8 +37,8 @@ app.include_router(api_router.router)
 
 
 @app.get("/health")
-async def health_check(request: Request):
-    return await request.app.state.container.system_service.get_health()
+async def health_check():
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":
