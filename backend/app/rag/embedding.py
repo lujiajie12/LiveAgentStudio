@@ -4,6 +4,7 @@ Embedding model and Milvus vector store utilities.
 
 import json
 import logging
+import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
@@ -207,6 +208,65 @@ class MilvusVectorStore:
         except Exception as exc:
             raise RuntimeError(f"Failed to create collection: {exc}") from exc
 
+    def _reconnect_collection(self):
+        try:
+            self.connections.disconnect(alias="default")
+        except Exception:
+            pass
+        self.connections.connect(alias="default", host=self.host, port=self.port)
+        self.collection = self.Collection(self.collection_name)
+        self._loaded = False
+
+    def _is_retryable_flush_error(self, exc: Exception) -> bool:
+        message = str(exc).lower()
+        return any(
+            token in message
+            for token in (
+                "channel not found",
+                "service unavailable",
+                "timed out",
+                "collection not loaded",
+                "connection refused",
+            )
+        )
+
+    def _safe_num_entities(self) -> int | None:
+        if not self.collection:
+            return None
+        try:
+            return int(self.collection.num_entities)
+        except Exception as exc:
+            logger.warning("Failed to read Milvus entity count: %s", exc)
+            try:
+                self._reconnect_collection()
+                return int(self.collection.num_entities)
+            except Exception as reconnect_exc:
+                logger.warning(
+                    "Failed to recover Milvus entity count after reconnect: %s",
+                    reconnect_exc,
+                )
+                return None
+
+    def _wait_for_entity_count(
+        self,
+        minimum_count: int,
+        max_attempts: int = 8,
+        delay_seconds: float = 2.0,
+    ) -> bool:
+        for attempt in range(1, max_attempts + 1):
+            current = self._safe_num_entities()
+            if current is not None and current >= minimum_count:
+                return True
+            logger.warning(
+                "Waiting for Milvus entity count to reach %d (attempt %d/%d, current=%s)",
+                minimum_count,
+                attempt,
+                max_attempts,
+                current,
+            )
+            time.sleep(delay_seconds)
+        return False
+
     async def create_index(self):
         try:
             if not self.collection:
@@ -327,14 +387,69 @@ class MilvusVectorStore:
             self.collection.load()
             self._loaded = True
 
-    async def insert_chunks(self, chunks: List[DocumentChunk], embeddings: List[List[float]]):
+    def _flush_with_retry(
+        self,
+        expected_min_entities: int | None = None,
+        max_attempts: int = 6,
+        delay_seconds: float = 2.0,
+    ):
+        last_error = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                self.collection.flush()
+                return
+            except Exception as exc:
+                last_error = exc
+                retryable = self._is_retryable_flush_error(exc)
+                if not retryable or attempt == max_attempts:
+                    if retryable and expected_min_entities is not None:
+                        logger.warning(
+                            "Milvus flush still failing after %d attempts, checking entity count before abort: %s",
+                            max_attempts,
+                            exc,
+                        )
+                        if self._wait_for_entity_count(expected_min_entities):
+                            logger.warning(
+                                "Milvus flush did not return cleanly, but entity count reached %d; continuing",
+                                expected_min_entities,
+                            )
+                            return
+                    raise
+                logger.warning(
+                    "Milvus flush attempt %d/%d failed, retrying: %s",
+                    attempt,
+                    max_attempts,
+                    exc,
+                )
+                time.sleep(delay_seconds * attempt)
+                self._reconnect_collection()
+
+    # 对外暴露统一 flush 入口：索引脚本可先连续 insert，再按窗口或末尾集中 flush。
+    async def flush(self, expected_min_entities: int | None = None):
+        if not self.collection:
+            return
+        self._flush_with_retry(expected_min_entities=expected_min_entities)
+
+    # 默认仍兼容“写后立刻 flush”；批量重建索引时可显式传 flush=False，把刷盘时机交给上层控制。
+    async def insert_chunks(
+        self,
+        chunks: List[DocumentChunk],
+        embeddings: List[List[float]],
+        *,
+        flush: bool = True,
+        expected_min_entities: int | None = None,
+    ):
         if len(chunks) != len(embeddings):
             raise ValueError("Chunks and embeddings length mismatch")
 
         try:
+            count_before = self._safe_num_entities() or 0
             for chunk_batch, embedding_batch in self._iter_insert_batches(chunks, embeddings):
                 self._insert_batch_with_retry(chunk_batch, embedding_batch)
-            self.collection.flush()
+            if flush:
+                self._flush_with_retry(
+                    expected_min_entities=expected_min_entities or (count_before + len(chunks))
+                )
         except Exception as exc:
             raise RuntimeError(f"Failed to insert data: {exc}") from exc
 

@@ -1,19 +1,17 @@
-﻿version: '3.8'
-
 services:
   postgres:
     image: postgres:15-alpine
     environment:
-      POSTGRES_USER: ${DB_USER:-user}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+      POSTGRES_USER: ${DB_USER:-root}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change_me}
       POSTGRES_DB: ${DB_NAME:-liveagent}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./scripts/init_db/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-user}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-root}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -21,14 +19,13 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # Milvus standalone dependencies
   etcd:
     image: quay.io/coreos/etcd:v3.5.5
     environment:
@@ -51,8 +48,8 @@ services:
       MINIO_ACCESS_KEY: minioadmin
       MINIO_SECRET_KEY: minioadmin
     ports:
-      - "9001:9001"
-      - "9000:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+      - "${MINIO_API_PORT:-9000}:9000"
     command: minio server /minio_data --console-address ":9001"
     volumes:
       - minio_data:/minio_data
@@ -63,14 +60,14 @@ services:
       retries: 3
 
   milvus:
-    image: milvusdb/milvus:v2.3.4
+    image: ${MILVUS_IMAGE:-milvusdb/milvus:v2.3.4}
     command: ["milvus", "run", "standalone"]
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
     ports:
-      - "19530:19530"
-      - "9091:9091"
+      - "${MILVUS_PORT:-19530}:19530"
+      - "${MILVUS_HEALTH_PORT:-9091}:9091"
     volumes:
       - milvus_data:/var/lib/milvus
     depends_on:
@@ -82,15 +79,14 @@ services:
       timeout: 20s
       retries: 5
 
-  # Elasticsearch BM25
   elasticsearch:
     image: elasticsearch:8.11.0
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
-      - ES_JAVA_OPTS=-Xms1g -Xmx2g
+      - ES_JAVA_OPTS=${ELASTICSEARCH_JAVA_OPTS:--Xms1g -Xmx2g}
     ports:
-      - "9200:9200"
+      - "${ELASTICSEARCH_PORT:-9200}:9200"
     volumes:
       - es_data:/usr/share/elasticsearch/data
     healthcheck:
@@ -103,18 +99,19 @@ services:
     build:
       context: ../backend
       dockerfile: Dockerfile
+      args:
+        PYTHON_BASE_IMAGE: ${BACKEND_BASE_IMAGE:-python:3.11-slim}
+    env_file:
+      - ../backend/.env
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     environment:
-      DATABASE_URL: postgresql://${DB_USER:-user}:${DB_PASSWORD:-password}@postgres:5432/${DB_NAME:-liveagent}
+      DATABASE_URL: postgresql://${DB_USER:-root}:${DB_PASSWORD:-change_me}@postgres:5432/${DB_NAME:-liveagent}
       REDIS_URL: redis://redis:6379/0
       MILVUS_HOST: milvus
       MILVUS_PORT: 19530
       ES_HOST: elasticsearch
       ES_PORT: 9200
-      LLM_API_KEY: ${LLM_API_KEY}
-      LLM_BASE_URL: ${LLM_BASE_URL}
-      LLM_MODEL: ${LLM_MODEL}
     depends_on:
       postgres:
         condition: service_healthy
@@ -127,8 +124,11 @@ services:
     build:
       context: ../frontend
       dockerfile: Dockerfile
+      args:
+        NODE_BASE_IMAGE: ${FRONTEND_NODE_BASE_IMAGE:-node:18-alpine}
+        NGINX_BASE_IMAGE: ${FRONTEND_NGINX_BASE_IMAGE:-nginx:alpine}
     ports:
-      - "5173:80"
+      - "${FRONTEND_PORT:-5173}:80"
     depends_on:
       - backend
 

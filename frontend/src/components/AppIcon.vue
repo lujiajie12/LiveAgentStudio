@@ -197,6 +197,31 @@ const icons = {
   'chevron-right': [
     { type: 'path', value: 'm9 6 6 6-6 6' }
   ],
+  history: [
+    { type: 'path', value: 'M3 12a9 9 0 1 0 3-6.7' },
+    { type: 'path', value: 'M3 4v4h4' },
+    { type: 'path', value: 'M12 7.5v5l3 1.8' }
+  ],
+  clock: [
+    { type: 'circle', cx: 12, cy: 12, r: 8.5 },
+    { type: 'path', value: 'M12 7.5v4.8l3 1.8' }
+  ],
+  copy: [
+    { type: 'rect', x: 9, y: 9, width: 10, height: 11, rx: 2 },
+    { type: 'path', value: 'M7 15H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1' }
+  ],
+  'trash-2': [
+    { type: 'path', value: 'M4 7h16' },
+    { type: 'path', value: 'M9 7V4h6v3' },
+    { type: 'path', value: 'M7 7l1 12h8l1-12' },
+    { type: 'path', value: 'M10 11v5' },
+    { type: 'path', value: 'M14 11v5' }
+  ],
+  'more-vertical': [
+    { type: 'circle', cx: 12, cy: 5, r: 1.2 },
+    { type: 'circle', cx: 12, cy: 12, r: 1.2 },
+    { type: 'circle', cx: 12, cy: 19, r: 1.2 }
+  ],
   flame: [
     { type: 'path', value: 'M12.5 3c.8 3-1.2 4.7-2.7 6 1.7-.1 3.4.9 4 2.7.8 2.2-.5 4.9-3 6-2.8 1.2-6-.2-7-3-1.3-3.6 1.1-6.2 3.3-8.3.8-.8 1.7-1.7 2.2-2.9.4-.8.6-1.6.7-2.5 1.2.5 2 1.4 2.5 2.3Z' }
   ]

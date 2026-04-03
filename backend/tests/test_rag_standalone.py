@@ -14,7 +14,6 @@ def load_env(path):
     return env
 
 for _p in [
-    os.path.join(BACKEND_DIR, '..', 'deploy', '.env'),
     os.path.join(BACKEND_DIR, '.env'),
     os.path.join(BACKEND_DIR, '..', '.env'),
 ]:

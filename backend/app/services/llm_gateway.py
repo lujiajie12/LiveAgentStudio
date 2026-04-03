@@ -23,6 +23,11 @@ try:
 except ImportError:  # pragma: no cover
     ChatOpenAI = None
 
+try:
+    from openai import AsyncOpenAI
+except ImportError:  # pragma: no cover
+    AsyncOpenAI = None
+
 
 class LLMGateway:
     """
@@ -48,6 +53,14 @@ class LLMGateway:
         """
         raise NotImplementedError
 
+    async def ainvoke_tool_call(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        tools: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
 
 class OpenAILLMGateway(LLMGateway):
     """
@@ -65,9 +78,11 @@ class OpenAILLMGateway(LLMGateway):
     
     def __init__(self):
         self._client = None
+        self._tool_client = None
         api_key  = settings.LLM_API_KEY or settings.OPENAI_API_KEY
         base_url = settings.LLM_BASE_URL or settings.OPENAI_BASE_URL
         model    = settings.LLM_MODEL or settings.ROUTER_MODEL
+        self._planner_model = settings.PLANNER_MODEL or settings.LLM_MODEL or settings.ROUTER_MODEL
 
         if api_key and ChatOpenAI is not None:
             self._client = ChatOpenAI(
@@ -76,6 +91,12 @@ class OpenAILLMGateway(LLMGateway):
                 base_url=base_url,
                 timeout=settings.ROUTER_TIMEOUT_MS / 1000,
                 temperature=0,
+            )
+        if api_key and AsyncOpenAI is not None:
+            self._tool_client = AsyncOpenAI(
+                api_key=api_key,
+                base_url=base_url,
+                timeout=settings.PLANNER_TIMEOUT_MS / 1000,
             )
 
     def _extract_json_payload(self, content: str) -> dict[str, Any]:
@@ -138,6 +159,80 @@ class OpenAILLMGateway(LLMGateway):
         if faq_hits:
             return "faq"
         return "mixed"
+
+    def _infer_tool_intent(self, lowered: str) -> str:
+        datetime_keywords = (
+            "今天周几",
+            "今天是周几",
+            "今天星期几",
+            "今天是星期几",
+            "礼拜几",
+            "周几",
+            "星期几",
+            "现在几点",
+            "几点了",
+            "几号",
+            "几月几号",
+            "当前日期",
+            "当前时间",
+            "日期",
+            "时间",
+        )
+        memory_recall_hint_keywords = (
+            "刚刚",
+            "刚才",
+            "上一轮",
+            "上一个",
+            "前面",
+            "之前",
+            "记得",
+            "回顾",
+            "回忆",
+        )
+        memory_recall_target_keywords = (
+            "我问",
+            "问你的",
+            "问题",
+            "提问",
+            "你说",
+            "你回答",
+            "回答了",
+            "回复",
+            "答复",
+            "聊了什么",
+            "聊到什么",
+            "对话",
+            "内容",
+        )
+        web_search_keywords = (
+            "最新",
+            "实时",
+            "新闻",
+            "官网",
+            "搜索",
+            "搜一下",
+            "查一下",
+            "帮我查",
+            "联网查",
+            "上网查",
+            "天气",
+            "汇率",
+            "股价",
+            "金价",
+            "油价",
+            "票房",
+            "行情",
+        )
+
+        if any(keyword in lowered for keyword in datetime_keywords):
+            return "datetime"
+        if any(keyword in lowered for keyword in memory_recall_hint_keywords) and any(
+            keyword in lowered for keyword in memory_recall_target_keywords
+        ):
+            return "memory_recall"
+        if any(keyword in lowered for keyword in web_search_keywords):
+            return "web_search"
+        return "none"
 
     async def ainvoke_json(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         """
@@ -216,6 +311,87 @@ class OpenAILLMGateway(LLMGateway):
             )
             return self._heuristic_response(user_prompt)
 
+    async def ainvoke_tool_call(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        tools: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        if self._tool_client is None:
+            raise RuntimeError("planner tool client unavailable")
+
+        started = perf_counter()
+        try:
+            response = await self._tool_client.chat.completions.create(
+                model=self._planner_model,
+                temperature=0,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                tools=tools,
+                tool_choice="auto",
+            )
+        except Exception as exc:
+            if self._is_timeout_error(exc):
+                await record_timed_tool_call(
+                    "planner_llm_function_call",
+                    started_at=started,
+                    node_name="router",
+                    category="llm",
+                    output_summary="timeout",
+                    status="degraded",
+                )
+                raise TimeoutError("planner tool call timed out") from exc
+            await record_timed_tool_call(
+                "planner_llm_function_call",
+                started_at=started,
+                node_name="router",
+                category="llm",
+                output_summary=str(exc),
+                status="degraded",
+            )
+            raise
+
+        message = response.choices[0].message
+        tool_calls = list(getattr(message, "tool_calls", []) or [])
+        if tool_calls:
+            tool_call = tool_calls[0]
+            raw_arguments = getattr(tool_call.function, "arguments", "") or "{}"
+            try:
+                arguments = json.loads(raw_arguments)
+            except json.JSONDecodeError:
+                arguments = {}
+            payload = {
+                "tool_name": str(getattr(tool_call.function, "name", "") or "").strip(),
+                "arguments": arguments,
+                "content": str(getattr(message, "content", "") or "").strip(),
+            }
+            await record_timed_tool_call(
+                "planner_llm_function_call",
+                started_at=started,
+                node_name="router",
+                category="llm",
+                output_summary=str(payload)[:200],
+                status="ok",
+            )
+            return payload
+
+        payload = {
+            "tool_name": "",
+            "arguments": {},
+            "content": str(getattr(message, "content", "") or "").strip(),
+        }
+        await record_timed_tool_call(
+            "planner_llm_function_call",
+            started_at=started,
+            node_name="router",
+            category="llm",
+            output_summary=str(payload)[:200],
+            status="degraded",
+        )
+        return payload
+
     def _heuristic_response(self, user_prompt: str) -> dict[str, Any]:
         """
         启发式规则匹配，用于 LLM 不可用时的降级方案
@@ -244,7 +420,9 @@ class OpenAILLMGateway(LLMGateway):
         except json.JSONDecodeError:
             # 如果不是 JSON，直接转小写
             lowered = user_prompt.lower()
-        
+
+        tool_intent = self._infer_tool_intent(lowered)
+
         # 基于关键词匹配识别意图
         if any(keyword in lowered for keyword in ["卖点", "促单", "话术", "库存"]):
             # 销售话术相关
@@ -252,17 +430,21 @@ class OpenAILLMGateway(LLMGateway):
         elif any(keyword in lowered for keyword in ["复盘", "统计", "高频", "report"]):
             # 复盘分析相关
             intent = "analyst"
+        elif tool_intent != "none":
+            # 工具型问题统一归到 qa，由下游根据标准 tool_intent 调工具。
+            intent = "qa"
         elif any(keyword in lowered for keyword in ["你好", "天气", "random", "乱码"]):
             # 无关或随机输入
             intent = "unknown"
         else:
             # 默认为常见问题解答
             intent = "qa"
-        
+
         # 返回识别结果
         # unknown 意图的置信度较低（0.55），其他意图置信度为 0.72
         return {
             "intent": intent,
+            "tool_intent": tool_intent,
             "confidence": 0.72 if intent != "unknown" else 0.55,
             "reason": "heuristic_fallback",
             "knowledge_scope": self._infer_knowledge_scope(lowered),

@@ -147,7 +147,7 @@ const result = computed(() => ragOps.onlineDebugResult)
 const isRunning = computed(() => ragOps.loading)
 const form = reactive({
   query: '青岚超净蒸汽拖洗一体机适合什么家庭用？跟普通拖把的区别是什么？',
-  current_product_id: 'SKU-001',
+  current_product_id: '',
   live_stage: 'pitch',
   source_hint: ''
 })

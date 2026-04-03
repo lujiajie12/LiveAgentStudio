@@ -7,8 +7,10 @@ import AgentFlowDetailPage from '@/pages/AgentFlowDetailPage.vue'
 import AgentFlowPage from '@/pages/AgentFlowPage.vue'
 import KnowledgePage from '@/pages/KnowledgePage.vue'
 import LoginPage from '@/pages/LoginPage.vue'
+import MemoryInsightsPage from '@/pages/MemoryInsightsPage.vue'
 import RagOnlinePage from '@/pages/RagOnlinePage.vue'
 import ReportsPage from '@/pages/ReportsPage.vue'
+import LiveSimulatorPage from '@/pages/LiveSimulatorPage.vue'
 import StudioLoginPage from '@/pages/StudioLoginPage.vue'
 import SystemPage from '@/pages/SystemPage.vue'
 import TeleprompterPage from '@/pages/TeleprompterPage.vue'
@@ -35,6 +37,12 @@ const routes = [
     meta: { requiresStudioAuth: true }
   },
   {
+    path: '/live-simulator',
+    name: 'live-simulator',
+    component: LiveSimulatorPage,
+    meta: { requiresStudioAuth: true }
+  },
+  {
     path: '/teleprompter/:sessionId',
     name: 'teleprompter',
     component: TeleprompterPage,
@@ -50,6 +58,7 @@ const routes = [
       { path: '/knowledge', redirect: '/rag/offline' },
       { path: '/rag/offline', name: 'rag-offline', component: KnowledgePage },
       { path: '/rag/online', name: 'rag-online', component: RagOnlinePage },
+      { path: '/memory/qa', name: 'memory-qa', component: MemoryInsightsPage },
       { path: '/agent-flow', name: 'agent-flow', component: AgentFlowPage },
       { path: '/agent-flow/:traceId', name: 'agent-flow-detail', component: AgentFlowDetailPage },
       { path: '/reports', name: 'reports', component: ReportsPage },

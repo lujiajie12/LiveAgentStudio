@@ -64,12 +64,12 @@ class LiveBarrageService:
             session = SessionRecord(
                 id=session_id,
                 user_id=requested_by,
-                current_product_id=current_product_id or "SKU-001",
+                current_product_id=current_product_id,
                 live_stage=normalized_stage,
                 status=SessionStatus.active,
             )
         else:
-            session.current_product_id = current_product_id or session.current_product_id or "SKU-001"
+            session.current_product_id = current_product_id
             session.live_stage = normalized_stage or session.live_stage
             session.updated_at = datetime.utcnow()
         await self.session_repository.save(session)
@@ -155,7 +155,7 @@ class LiveBarrageService:
             session = SessionRecord(
                 id=session_id,
                 user_id="studio",
-                current_product_id="SKU-001",
+                current_product_id=None,
                 live_stage=LiveStage.intro,
                 status=SessionStatus.active,
             )
@@ -168,6 +168,72 @@ class LiveBarrageService:
             interaction_rate=cached.get("interaction_rate"),
         )
         overview["conversion_rate_estimated"] = bool(cached.get("conversion_rate_estimated", True))
+        return overview
+
+    async def update_overview(
+        self,
+        *,
+        session_id: str,
+        requested_by: str,
+        current_product_id: str | None = None,
+        live_stage: str | None = None,
+        online_viewers: int | None = None,
+        conversion_rate: float | None = None,
+        interaction_rate: float | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        normalized_stage = live_stage or LiveStage.intro.value
+        session = await self.session_repository.get(session_id)
+        if session is None:
+            session = SessionRecord(
+                id=session_id,
+                user_id=requested_by,
+                current_product_id=current_product_id,
+                live_stage=normalized_stage,
+                status=SessionStatus.active,
+            )
+        else:
+            session.current_product_id = current_product_id
+            session.live_stage = normalized_stage or session.live_stage
+            session.updated_at = datetime.utcnow()
+        await self.session_repository.save(session)
+
+        recent_payload = await self.list_recent_barrages(session_id, limit=self.recent_limit)
+        recent_records = [self.deserialize_barrage(item) for item in recent_payload]
+        overview = await self._build_overview(
+            session=session,
+            recent_records=recent_records,
+            online_viewers=online_viewers,
+            conversion_rate=conversion_rate,
+            interaction_rate=interaction_rate,
+        )
+        if metadata:
+            overview["metadata"] = metadata
+        await self._write_overview_cache(session_id, overview)
+
+        await self.tool_log_repository.create(
+            ToolCallLogRecord(
+                session_id=session_id,
+                tool_name="live_overview_update",
+                node_name="live",
+                category="live",
+                input_payload={
+                    "current_product_id": session.current_product_id,
+                    "live_stage": overview["live_stage"],
+                    "online_viewers": overview["online_viewers"],
+                },
+                output_summary=f"viewers={overview['online_viewers']} product={overview['current_product_id'] or 'unset'}",
+                status="ok",
+            )
+        )
+
+        await self._broadcast(
+            session_id,
+            {
+                "type": "overview",
+                "item": overview,
+            },
+        )
         return overview
 
     async def subscribe(self, session_id: str) -> asyncio.Queue:
@@ -256,7 +322,7 @@ class LiveBarrageService:
         return {
             "session_id": session.id,
             "online_viewers": int(online_viewers),
-            "current_product_id": session.current_product_id or "SKU-001",
+            "current_product_id": session.current_product_id,
             "live_stage": session.live_stage.value if hasattr(session.live_stage, "value") else str(session.live_stage),
             "interaction_rate": float(interaction_rate),
             "conversion_rate": float(conversion_rate),

@@ -8,7 +8,7 @@ function buildDefaultPayload() {
   return {
     session_id: `agent-flow-${Date.now()}`,
     user_input: '帮我生成一段促单话术，强调库存紧张和当前优惠节奏。',
-    current_product_id: 'SKU-001',
+    current_product_id: '',
     live_stage: 'closing',
     hot_keywords: ['库存', '优惠', '限时'],
     live_offer_snapshot: {

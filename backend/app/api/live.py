@@ -29,6 +29,16 @@ class BarrageIngestRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class LiveOverviewUpdateRequest(BaseModel):
+    session_id: str = Field(min_length=1)
+    current_product_id: str | None = Field(default=None, max_length=64)
+    live_stage: str | None = Field(default=None, max_length=32)
+    online_viewers: int | None = Field(default=None, ge=0)
+    conversion_rate: float | None = Field(default=None, ge=0.0, le=100.0)
+    interaction_rate: float | None = Field(default=None, ge=0.0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 @router.post("/barrages/ingest", response_model=ApiResponse)
 async def ingest_barrage(
     payload: BarrageIngestRequest,
@@ -61,6 +71,25 @@ async def get_live_overview(
 ):
     _ = current_user
     overview = await container.live_barrage_service.get_overview(session_id)
+    return ApiResponse(data=overview)
+
+
+@router.post("/overview/update", response_model=ApiResponse)
+async def update_live_overview(
+    payload: LiveOverviewUpdateRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    container=Depends(get_container),
+):
+    overview = await container.live_barrage_service.update_overview(
+        session_id=payload.session_id,
+        requested_by=current_user.id,
+        current_product_id=payload.current_product_id,
+        live_stage=payload.live_stage,
+        online_viewers=payload.online_viewers,
+        conversion_rate=payload.conversion_rate,
+        interaction_rate=payload.interaction_rate,
+        metadata=payload.metadata,
+    )
     return ApiResponse(data=overview)
 
 

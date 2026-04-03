@@ -80,6 +80,7 @@ const navItems = [
   { to: '/workbench', label: '首页', icon: 'home' },
   { to: '/rag/offline', label: '离线索引管理', icon: 'book-open' },
   { to: '/rag/online', label: '在线检索调试', icon: 'list-todo' },
+  { to: '/memory/qa', label: 'QA Memory', icon: 'history' },
   { to: '/agent-flow', label: 'Agent Flow', icon: 'workflow' },
   { to: '/reports', label: '复盘报告', icon: 'monitor-play' },
   { to: '/system', label: '系统设置', icon: 'settings' }

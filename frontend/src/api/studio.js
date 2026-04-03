@@ -25,6 +25,16 @@ export async function fetchStudioLiveOverview(sessionId) {
   return response.data.data
 }
 
+export async function updateStudioLiveOverview(payload) {
+  const response = await studioHttp.post('/live/overview/update', payload)
+  return response.data.data
+}
+
+export async function ingestStudioBarrage(payload) {
+  const response = await studioHttp.post('/live/barrages/ingest', payload)
+  return response.data.data
+}
+
 export async function fetchStudioSystemHealth() {
   const response = await studioHttp.get('/system/health')
   return response.data.data

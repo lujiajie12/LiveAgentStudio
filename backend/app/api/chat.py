@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
@@ -22,9 +24,40 @@ async def stream_chat(
 
     async def event_generator():
         try:
-            result, assistant_message = await container.chat_service.run_chat(
-                payload, current_user.id, trace_id, current_user.role.value
+            yield format_sse_event(
+                ChatEvent(
+                    event="meta",
+                    data={
+                        "trace_id": trace_id,
+                        "session_id": payload.session_id,
+                        "intent": "qa",
+                        "pending": True,
+                    },
+                )
             )
+            task = asyncio.create_task(
+                container.chat_service.run_chat(
+                    payload, current_user.id, trace_id, current_user.role.value
+                )
+            )
+
+            while not task.done():
+                await asyncio.sleep(0.8)
+                if task.done():
+                    break
+                yield format_sse_event(
+                    ChatEvent(
+                        event="status",
+                        data={
+                            "trace_id": trace_id,
+                            "session_id": payload.session_id,
+                            "stage": "processing",
+                            "message": "系统正在分析问题并准备回答...",
+                        },
+                    )
+                )
+
+            result, assistant_message = await task
             yield format_sse_event(
                 ChatEvent(
                     event="meta",
@@ -32,11 +65,13 @@ async def stream_chat(
                         "trace_id": trace_id,
                         "session_id": payload.session_id,
                         "intent": result["intent"],
+                        "pending": False,
                     },
                 )
             )
             for chunk in container.streaming_service.chunk_text(result["final_output"]):
                 yield format_sse_event(ChatEvent(event="token", data={"content": chunk}))
+                await asyncio.sleep(container.streaming_service.event_delay_ms / 1000)
             yield format_sse_event(
                 ChatEvent(
                     event="final",

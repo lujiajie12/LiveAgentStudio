@@ -238,6 +238,22 @@ def test_live_barrage_and_teleprompter_endpoints(client, auth_headers):
     token = auth_headers["Authorization"].split(" ", 1)[1]
     session_id = "studio-live-room-001"
 
+    update_response = client.post(
+        "/api/v1/live/overview/update",
+        json={
+            "session_id": session_id,
+            "current_product_id": "SKU-001",
+            "live_stage": "intro",
+            "online_viewers": 12001,
+            "conversion_rate": 3.12,
+            "interaction_rate": 6.5,
+            "metadata": {"source": "test-suite"},
+        },
+        headers=auth_headers,
+    )
+    assert update_response.status_code == 200
+    assert update_response.json()["data"]["online_viewers"] == 12001
+
     first_ingest = client.post(
         "/api/v1/live/barrages/ingest",
         json={

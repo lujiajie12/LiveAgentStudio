@@ -7,6 +7,8 @@ class LiveAgentState(TypedDict):
     session_id: str
     user_id: str
     user_role: NotRequired[str]
+    app_id: NotRequired[str]
+    run_id: NotRequired[str]
     user_input: str
     live_stage: str
     current_product_id: str | None
@@ -22,7 +24,18 @@ class LiveAgentState(TypedDict):
     intent: NotRequired[str]
     intent_confidence: NotRequired[float]
     route_reason: NotRequired[str]
+    route_target: NotRequired[str]
+    requires_retrieval: NotRequired[bool]
     knowledge_scope: NotRequired[str]
+    tool_intent: NotRequired[str]
+    memory_recall_request: NotRequired[dict[str, Any]]
+    planner_mode: NotRequired[str]
+    planner_action: NotRequired[str]
+    planner_action_args: NotRequired[dict[str, Any]]
+    planner_step_count: NotRequired[int]
+    planner_trace: NotRequired[list[dict[str, Any]]]
+    executor_observations: NotRequired[list[dict[str, Any]]]
+    planning_completed: NotRequired[bool]
     route_fallback_reason: NotRequired[str | None]
     route_low_confidence: NotRequired[bool]
 
@@ -30,9 +43,13 @@ class LiveAgentState(TypedDict):
     agent_output: NotRequired[str]
     references: NotRequired[list[str]]
     retrieved_docs: NotRequired[list[dict[str, Any]]]
+    long_term_memories: NotRequired[list[dict[str, Any]]]
+    long_term_memory_hits: NotRequired[int]
     rewritten_query: NotRequired[str]
     qa_confidence: NotRequired[float]
     unresolved: NotRequired[bool]
+    tools_used: NotRequired[list[str]]
+    tool_outputs: NotRequired[dict[str, Any]]
     script_type: NotRequired[str]
     script_tone: NotRequired[str]
     script_reason: NotRequired[str]

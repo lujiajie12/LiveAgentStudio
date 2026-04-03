@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+from app.core.config import settings
 from app.core.observability import bind_observability
 from app.graph.runtime import GraphRuntime
 from app.repositories.base import MessageRepository, SessionRepository, ToolCallLogRepository
@@ -7,6 +10,9 @@ from app.schemas.chat import ChatStreamRequest
 from app.schemas.domain import IntentType, MessageRecord, MessageRole, SessionRecord, SessionStatus
 from app.services.memory_service import MemoryService
 from app.services.settings_service import SettingsService
+
+if TYPE_CHECKING:
+    from app.memory.qa_agent_memory_hook import QAMemoryHook
 
 
 class _DefaultSettingsService:
@@ -29,6 +35,7 @@ class ChatService:
         memory_service: MemoryService,
         tool_log_repository: ToolCallLogRepository,
         settings_service: SettingsService | None = None,
+        qa_memory_hook: "QAMemoryHook | None" = None,
     ):
         self.graph_runtime = graph_runtime
         self.session_repository = session_repository
@@ -36,6 +43,7 @@ class ChatService:
         self.memory_service = memory_service
         self.tool_log_repository = tool_log_repository
         self.settings_service = settings_service or _DefaultSettingsService()
+        self.qa_memory_hook = qa_memory_hook
 
     # 如果当前 session 不存在则创建，存在则保持原状态继续复用。
     async def ensure_session(self, session_id: str, user_id: str) -> SessionRecord:
@@ -94,6 +102,8 @@ class ChatService:
             "session_id": request.session_id,
             "user_id": user_id,
             "user_role": user_role,
+            "app_id": getattr(settings, "QA_MEMORY_APP_ID", "liveagent-studio"),
+            "run_id": trace_id,
             "user_input": request.user_input,
             "live_stage": request.live_stage.value,
             "current_product_id": request.current_product_id,
@@ -114,15 +124,28 @@ class ChatService:
             "guardrail_action": result.get("guardrail_action"),
             "guardrail_violations": result.get("guardrail_violations", []),
             "route_reason": result.get("route_reason"),
+            "route_target": result.get("route_target"),
+            "requires_retrieval": result.get("requires_retrieval"),
             "route_fallback_reason": result.get("route_fallback_reason"),
             "route_low_confidence": result.get("route_low_confidence"),
             "knowledge_scope": result.get("knowledge_scope"),
+            "tool_intent": result.get("tool_intent"),
+            "memory_recall_request": result.get("memory_recall_request"),
+            "planner_mode": result.get("planner_mode"),
+            "planner_action": result.get("planner_action"),
+            "planner_step_count": result.get("planner_step_count"),
+            "planner_trace": result.get("planner_trace", []),
+            "executor_observations": result.get("executor_observations", []),
             "rewritten_query": result.get("rewritten_query"),
             "qa_confidence": result.get("qa_confidence"),
             "references": result.get("references", []),
             "unresolved": result.get("unresolved", False),
             "memory_status": result.get("memory_status"),
             "high_frequency_questions": result.get("high_frequency_questions", []),
+            "tools_used": result.get("tools_used", []),
+            "tool_outputs": result.get("tool_outputs", {}),
+            "long_term_memories": result.get("long_term_memories", []),
+            "long_term_memory_hits": result.get("long_term_memory_hits", 0),
         }
         if result.get("script_type"):
             metadata["script_type"] = result.get("script_type")
@@ -177,4 +200,16 @@ class ChatService:
             request.live_stage.value,
             request.hot_keywords,
         )
+        if self.qa_memory_hook is not None and result.get("agent_name") == "qa":
+            try:
+                await self.qa_memory_hook.remember_qa_interaction(
+                    user_input=request.user_input,
+                    assistant_output=result["final_output"],
+                    user_id=user_id,
+                    run_id=trace_id,
+                    current_product_id=request.current_product_id,
+                    metadata=metadata,
+                )
+            except Exception:
+                pass
         return result, assistant

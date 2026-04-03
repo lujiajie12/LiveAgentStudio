@@ -4,11 +4,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.agents.analyst_agent import AnalystAgent
+from app.agents.direct_reply_agent import DirectReplyAgent
 from app.agents.qa_agent import ChatOpenAIJsonClient, QAAgent
 from app.agents.router import RouterAgent
 from app.agents.script_agent import ScriptAgent
 from app.core.config import settings
 from app.graph.runtime import GraphRuntime
+from app.memory.memory_policy import MemoryPolicy
+from app.memory.memory_service import LongTermMemoryService
+from app.memory.qa_agent_memory_hook import QAMemoryHook
 from app.infra.database import build_engine, build_session_factory, init_db
 from app.rag.hybrid_retrieval_pipeline import HybridRetrievalPipeline
 from app.rag.indexes import BM25Index, DashScopeReranker, LocalReranker, MockReranker, VectorIndex
@@ -71,6 +75,7 @@ class AppContainer:
     rag_job_repository: RagOfflineJobRepository
     auth_service: AuthService
     memory_service: MemoryService
+    qa_long_term_memory_service: LongTermMemoryService
     settings_service: SettingsService
     knowledge_service: KnowledgeService
     guardrail_service: GuardrailService
@@ -114,6 +119,14 @@ def build_container() -> AppContainer:
         ttl_seconds=settings.MEMORY_TTL_SECONDS,
         hot_keywords_ttl_seconds=settings.HOT_KEYWORDS_TTL_SECONDS,
     )
+    qa_long_term_memory_service = LongTermMemoryService.from_mem0_config(
+        api_key=settings.MEM0_API_KEY,
+        base_url=settings.MEM0_BASE_URL,
+        org_id=settings.MEM0_ORG_ID,
+        project_id=settings.MEM0_PROJECT_ID,
+        enabled=settings.QA_MEMORY_ENABLED,
+        similarity_threshold=settings.QA_MEMORY_THRESHOLD,
+    )
     settings_service = SettingsService(agent_preference_repository)
     knowledge_service = KnowledgeService()
     guardrail_service = GuardrailService(settings.SENSITIVE_TERMS)
@@ -148,6 +161,19 @@ def build_container() -> AppContainer:
         llm_client=ChatOpenAIJsonClient(label="qa"),
     )
     qa_agent.bind_high_frequency_repository(high_frequency_repository)
+    qa_agent.bind_memory_hook(
+        QAMemoryHook(
+            memory_service=qa_long_term_memory_service,
+            policy=MemoryPolicy(),
+            agent_id=settings.QA_MEMORY_AGENT_ID,
+            app_id=settings.QA_MEMORY_APP_ID,
+            top_k=settings.QA_MEMORY_TOP_K,
+            threshold=settings.QA_MEMORY_THRESHOLD,
+        )
+    )
+    direct_agent = DirectReplyAgent(
+        llm_client=ChatOpenAIJsonClient(label="direct_reply"),
+    )
     script_agent = ScriptAgent(
         retrieval_pipeline=retrieval_pipeline,
         llm_client=ChatOpenAIJsonClient(label="script"),
@@ -165,6 +191,7 @@ def build_container() -> AppContainer:
         guardrail_service=guardrail_service,
         retrieval_pipeline=retrieval_pipeline,
         qa_agent=qa_agent,
+        direct_agent=direct_agent,
         script_agent=script_agent,
         analyst_agent=analyst_agent,
     )
@@ -175,6 +202,7 @@ def build_container() -> AppContainer:
         memory_service=memory_service,
         tool_log_repository=tool_log_repository,
         settings_service=settings_service,
+        qa_memory_hook=qa_agent.memory_hook,
     )
     system_service = SystemService(
         db_engine=db_engine,
@@ -226,6 +254,7 @@ def build_container() -> AppContainer:
         rag_job_repository=rag_job_repository,
         auth_service=auth_service,
         memory_service=memory_service,
+        qa_long_term_memory_service=qa_long_term_memory_service,
         settings_service=settings_service,
         knowledge_service=knowledge_service,
         guardrail_service=guardrail_service,

@@ -12,7 +12,26 @@ class StubRouterAgent:
             "intent": "qa",
             "intent_confidence": 0.98,
             "route_reason": "stub route to qa",
+            "route_target": "qa",
+            "requires_retrieval": True,
             "knowledge_scope": "product_detail",
+            "route_fallback_reason": None,
+            "route_low_confidence": False,
+            "agent_name": "router",
+        }
+
+
+class StubMemoryRouterAgent:
+    async def run(self, state):
+        _ = state
+        return {
+            "intent": "qa",
+            "intent_confidence": 0.98,
+            "route_reason": "stub route to memory recall qa",
+            "route_target": "qa",
+            "requires_retrieval": False,
+            "knowledge_scope": "mixed",
+            "tool_intent": "memory_recall",
             "route_fallback_reason": None,
             "route_low_confidence": False,
             "agent_name": "router",
@@ -154,3 +173,52 @@ def test_chat_stream_runs_real_qa_agent_chain(client, auth_headers):
     messages = messages_response.json()["data"]
     assistant_messages = [message for message in messages if message["role"] == "assistant"]
     assert assistant_messages[-1]["metadata"]["rewritten_query"] == pipeline.last_query
+
+
+def test_chat_stream_routes_noise_query_to_direct_reply(client, auth_headers):
+    session_id = "direct-api-session"
+
+    response = client.post(
+        "/api/v1/chat/stream",
+        headers=auth_headers,
+        json={
+            "session_id": session_id,
+            "user_input": "1111",
+            "current_product_id": "SKU-1",
+            "live_stage": "pitch",
+        },
+    )
+
+    assert response.status_code == 200
+    final_payload = _extract_final_payload(response.text)
+    assert final_payload["intent"] == "unknown"
+    assert final_payload["message"]["agent_name"] == "direct"
+    assert final_payload["message"]["metadata"]["route_target"] == "direct"
+    assert final_payload["message"]["metadata"]["requires_retrieval"] is False
+    assert final_payload["message"]["metadata"]["references"] == []
+
+
+def test_chat_stream_can_recall_last_user_question_from_short_term_memory(client, auth_headers):
+    session_id = "qa-memory-api-session"
+    container = client.app.state.container
+
+    _seed_memory(container, session_id)
+    container.graph_runtime.router_agent = StubMemoryRouterAgent()
+
+    response = client.post(
+        "/api/v1/chat/stream",
+        headers=auth_headers,
+        json={
+            "session_id": session_id,
+            "user_input": "刚刚我问你的是什么问题？",
+            "current_product_id": "SKU-1",
+            "live_stage": "pitch",
+        },
+    )
+
+    assert response.status_code == 200
+    final_payload = _extract_final_payload(response.text)
+    assert final_payload["intent"] == "qa"
+    assert final_payload["message"]["agent_name"] == "qa"
+    assert final_payload["message"]["content"] == "你刚刚问的是：“Tell me about Qinglan steam mop.”。"
+    assert final_payload["message"]["metadata"]["references"] == []

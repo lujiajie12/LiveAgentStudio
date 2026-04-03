@@ -20,6 +20,8 @@ class StubGraphRuntime:
             "final_output": "stub final answer",
             "guardrail_pass": True,
             "route_reason": "stub route",
+            "route_target": "qa",
+            "requires_retrieval": True,
             "route_fallback_reason": None,
             "route_low_confidence": False,
             "knowledge_scope": "product_detail",
@@ -57,3 +59,5 @@ async def test_chat_service_persists_qa_metadata():
     assert assistant.metadata["qa_confidence"] == 0.84
     assert assistant.metadata["references"] == ["doc-1"]
     assert assistant.metadata["unresolved"] is False
+    assert assistant.metadata["route_target"] == "qa"
+    assert assistant.metadata["requires_retrieval"] is True

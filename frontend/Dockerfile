@@ -1,4 +1,7 @@
-FROM node:18-alpine
+ARG NODE_BASE_IMAGE=node:18-alpine
+ARG NGINX_BASE_IMAGE=nginx:alpine
+
+FROM ${NODE_BASE_IMAGE} AS build
 
 WORKDIR /app
 
@@ -9,8 +12,8 @@ COPY . .
 
 RUN npm run build
 
-FROM nginx:alpine
-COPY --from=0 /app/dist /usr/share/nginx/html
+FROM ${NGINX_BASE_IMAGE}
+COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80

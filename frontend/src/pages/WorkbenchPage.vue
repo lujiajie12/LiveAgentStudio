@@ -19,12 +19,22 @@
           </header>
 
           <div class="studio-v2__metric-list">
-            <article v-for="item in workspace.topMetrics" :key="item.key" class="studio-v2__metric">
+            <article v-for="item in dashboardMetrics" :key="item.key" class="studio-v2__metric">
               <div class="studio-v2__metric-label">
                 <AppIcon :name="item.icon" :size="14" />
                 <span>{{ item.label }}</span>
               </div>
-              <strong :class="{ 'studio-v2__metric-chip': item.key === 'product' }">{{ item.value }}</strong>
+
+              <div class="studio-v2__metric-value">
+                <strong :class="{ 'studio-v2__metric-chip': item.key === 'product' }">{{ item.value }}</strong>
+                <small
+                  v-if="item.trend"
+                  class="studio-v2__metric-trend"
+                  :class="`studio-v2__metric-trend--${item.trend.direction}`"
+                >
+                  {{ item.trend.label }}
+                </small>
+              </div>
             </article>
           </div>
         </section>
@@ -62,7 +72,12 @@
           </header>
 
           <div class="studio-v2__agent-list">
-            <article v-for="agent in workspace.agentStatuses" :key="agent.key" class="studio-v2__agent-item">
+            <article
+              v-for="agent in workspace.agentStatuses"
+              :key="agent.key"
+              class="studio-v2__agent-item"
+              :class="`studio-v2__agent-item--${agent.status}`"
+            >
               <div class="studio-v2__agent-content">
                 <AppIcon :name="agent.icon" :size="15" />
                 <div>
@@ -92,7 +107,7 @@
           <header class="studio-v2__intent-header">
             <div class="studio-v2__intent-title">
               <AppIcon name="flame" :size="16" />
-              <strong>高优意图捕捉 (AI过滤)</strong>
+              <strong>高优意图捕捉 (AI 过滤)</strong>
             </div>
             <span class="studio-v2__intent-badge">{{ workspace.priorityCards.length }} 待处理</span>
           </header>
@@ -108,14 +123,9 @@
                 <span class="studio-v2__intent-tag">{{ card.label }}</span>
                 <span class="studio-v2__intent-freq">{{ card.frequency }}</span>
               </div>
-              <p>{{ card.summary }}</p>
+              <p class="studio-v2__intent-summary" :title="card.summary">{{ card.summary }}</p>
               <div class="studio-v2__intent-actions">
-                <button
-                  type="button"
-                  class="studio-v2__primary-button"
-                  :disabled="workspace.isStreaming"
-                  @click="fillPrompt(card.prompt)"
-                >
+                <button type="button" class="studio-v2__primary-button" @click="fillPrompt(card.prompt)">
                   <AppIcon name="bot" :size="12" />
                   交由 AI 生成
                 </button>
@@ -126,7 +136,13 @@
             </article>
 
             <article v-if="!workspace.priorityCards.length" class="studio-v2__intent-card studio-v2__intent-card--empty">
-              <p>当前没有待处理的高优意图。真实弹幕接入后，系统会自动把高频问题聚合到这里。</p>
+              <div class="studio-v2__empty-state">
+                <AppIcon name="flame" :size="18" />
+                <div>
+                  <strong>当前没有待处理的高优意图</strong>
+                  <p>真实弹幕接入后，系统会自动把高频问题聚合到这里。</p>
+                </div>
+              </div>
             </article>
           </div>
         </article>
@@ -139,16 +155,21 @@
             </div>
           </header>
 
-          <div class="studio-v2__raw-list">
-            <article v-for="item in workspace.rawBarrages" :key="item.id" class="studio-v2__raw-item">
-              <span class="studio-v2__raw-user">{{ item.user }}</span>
-              <span class="studio-v2__raw-text">{{ item.text }}</span>
+          <div ref="rawListRef" class="studio-v2__raw-list studio-v2__custom-scrollbar">
+            <template v-if="workspace.rawBarrages.length">
+              <article v-for="item in workspace.rawBarrages" :key="item.id" class="studio-v2__raw-item">
+                <span class="studio-v2__raw-user">{{ item.user }}</span>
+                <span class="studio-v2__raw-text">{{ item.text }}</span>
+              </article>
+            </template>
+
+            <article v-else class="studio-v2__raw-item studio-v2__raw-item--empty">
+              <AppIcon name="message-square" :size="16" />
+              <div>
+                <span class="studio-v2__raw-user">System</span>
+                <span class="studio-v2__raw-text">等待弹幕流接入...</span>
+              </div>
             </article>
-            <article v-if="!workspace.rawBarrages.length" class="studio-v2__raw-item">
-              <span class="studio-v2__raw-user">System</span>
-              <span class="studio-v2__raw-text">等待弹幕流接入...</span>
-            </article>
-            <div ref="barrageEndRef"></div>
           </div>
         </article>
       </section>
@@ -159,6 +180,7 @@
             <p class="panel__eyebrow">AI Action Center</p>
             <h2>智能编排与输出生成 (AI Action Center)</h2>
           </div>
+
           <div class="studio-v2__main-status">
             <span class="status-chip">
               <AppIcon name="monitor-up" :size="14" />
@@ -168,6 +190,10 @@
               <AppIcon name="mic" :size="14" />
               TTS 通道待命
             </span>
+            <button type="button" class="status-chip" @click="openLiveSimulator">
+              <AppIcon name="message-square" :size="14" />
+              打开直播模拟页
+            </button>
             <button type="button" class="status-chip" @click="openTeleprompterPreview">
               <AppIcon name="monitor-up" :size="14" />
               打开提词器
@@ -192,15 +218,15 @@
                   <AppIcon name="bot" :size="18" />
                   <span>{{ card.title }} · {{ card.subtitle }}</span>
                 </div>
-                <span class="studio-v2__action-badge">{{ card.detail }}</span>
+                <span class="studio-v2__action-badge" :class="qaBadgeClass()">{{ qaBadgeLabel(card) }}</span>
               </header>
 
               <div class="studio-v2__action-body">
-                <label>AI 生成话术（可编辑）</label>
-                <textarea
-                  :value="editorDrafts[card.key] ?? card.content"
-                  @input="updateDraft(card.key, $event.target.value)"
-                />
+                <label>AI 当前输出结果</label>
+                <p v-if="workspace.isStreaming && workspace.streamingKey === 'qa'" class="studio-v2__action-streaming-note">
+                  AI 正在流式生成中，结果会逐字追加到当前草稿。
+                </p>
+                <textarea :value="resolveDraft(card)" @input="updateDraft(card.key, $event.target.value)"></textarea>
               </div>
 
               <footer class="studio-v2__action-footer">
@@ -237,24 +263,69 @@
                     ref="commandInputRef"
                     v-model="commandInput"
                     type="text"
-                    :disabled="workspace.isStreaming"
-                    placeholder="输入高优问题或场控指令…（例如：请帮我处理这个直播间问题：今天这场直播主推什么？）"
+                    placeholder="输入高优问题或场控指令...（例如：请帮我处理这个直播间问题：今天这场直播主推什么？）"
                     @keydown.enter.prevent="submitCommand"
                   />
                   <button
                     type="button"
                     class="studio-v2__command-send"
-                    :disabled="workspace.isStreaming || !commandInput.trim()"
+                    :disabled="!commandInput.trim()"
                     @click="submitCommand"
                   >
                     <AppIcon name="send" :size="18" />
                   </button>
                 </div>
+
+                <div
+                  v-if="workspace.awaitingFirstToken || workspace.slowRequest || workspace.queuedCommands.length"
+                  class="studio-v2__command-status"
+                >
+                  <span v-if="workspace.awaitingFirstToken" class="studio-v2__command-pill studio-v2__command-pill--pending">
+                    AI 正在思考
+                  </span>
+                  <span v-if="workspace.slowRequest" class="studio-v2__command-pill studio-v2__command-pill--slow">
+                    响应较慢，仍在处理中
+                  </span>
+                  <span v-if="workspace.queuedCommands.length" class="studio-v2__command-pill studio-v2__command-pill--queue">
+                    队列 {{ workspace.queuedCommands.length }} 条
+                  </span>
+                </div>
+
+                <div v-if="workspace.queuedCommands.length" class="studio-v2__command-queue">
+                  <article
+                    v-for="(item, index) in visibleQueuedCommands"
+                    :key="item.id"
+                    class="studio-v2__command-queue-item"
+                  >
+                    <div class="studio-v2__command-queue-copy">
+                      <strong>#{{ index + 1 }}</strong>
+                      <p>{{ item.text }}</p>
+                    </div>
+                    <button
+                      type="button"
+                      class="studio-v2__command-queue-remove"
+                      @click="workspace.removeQueuedCommand(item.id)"
+                    >
+                      移除
+                    </button>
+                  </article>
+                  <p v-if="queuedOverflowCount" class="studio-v2__command-queue-more">
+                    还有 {{ queuedOverflowCount }} 条待处理指令
+                  </p>
+                </div>
+
                 <p class="studio-v2__command-hint">
-                  点左侧高优问题一键填入，再在这里发送；RAG 结果会直接回流到当前卡片。
+                  点击左侧高优问题一键填入，再在这里发送；结果会直接回流到当前卡片。
                 </p>
                 <p v-if="workspace.error" class="error-text">{{ workspace.error }}</p>
               </div>
+
+              <RecentQAHistory
+                :items="qaTimeline"
+                @copy="copyQaHistoryAnswer"
+                @push="pushQaHistoryToTeleprompter"
+                @remove="dismissQaHistoryItem"
+              />
             </template>
 
             <template v-else-if="card.key === 'guardrail'">
@@ -268,7 +339,6 @@
                 </header>
                 <div class="studio-v2__action-safe">
                   <p>{{ card.content }}</p>
-                  <small>{{ card.detail }}</small>
                 </div>
               </template>
 
@@ -295,10 +365,7 @@
 
                   <div class="studio-v2__action-body studio-v2__action-body--compact">
                     <label>AI 补救话术建议</label>
-                    <textarea
-                      :value="editorDrafts[card.key] ?? card.content"
-                      @input="updateDraft(card.key, $event.target.value)"
-                    />
+                    <textarea :value="resolveDraft(card)" @input="updateDraft(card.key, $event.target.value)"></textarea>
                   </div>
                 </div>
 
@@ -373,7 +440,11 @@
                   <AppIcon name="monitor-up" :size="14" />
                   推送提词器
                 </button>
-                <button type="button" class="studio-v2__primary-button studio-v2__primary-button--warning" @click="executeOpsPlan(card)">
+                <button
+                  type="button"
+                  class="studio-v2__primary-button studio-v2__primary-button--warning"
+                  @click="executeOpsPlan(card)"
+                >
                   执行方案 {{ selectedPlans[card.key] || 'A' }}
                   <AppIcon name="chevron-right" :size="14" />
                 </button>
@@ -390,25 +461,173 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 
 import AppIcon from '@/components/AppIcon.vue'
+import RecentQAHistory from '@/components/RecentQAHistory.vue'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { readStudioUser } from '@/utils/studioAuth'
 
 const workspace = useWorkspaceStore()
 const commandInput = ref('')
 const commandInputRef = ref(null)
-const barrageEndRef = ref(null)
+const rawListRef = ref(null)
+const previousOverview = ref(null)
+const dismissedQaHistoryIds = ref([])
 const editorDrafts = reactive({})
 const selectedPlans = reactive({ ops: 'A' })
-const operatorName = computed(() => readStudioUser()?.username || 'demo-operator')
+
+const operatorName = computed(() => {
+  const studioUser = readStudioUser()
+  return studioUser?.username || studioUser?.name || 'demo-operator'
+})
+
+const visibleQueuedCommands = computed(() => workspace.queuedCommands.slice(0, 3))
+const queuedOverflowCount = computed(() => Math.max(0, workspace.queuedCommands.length - visibleQueuedCommands.value.length))
+
+const dashboardMetrics = computed(() => {
+  const overview = workspace.overview || {}
+  return [
+    {
+      key: 'viewers',
+      label: '在线人数',
+      value: Number(overview.online_viewers || 0).toLocaleString('zh-CN'),
+      icon: 'users'
+    },
+    {
+      key: 'product',
+      label: '当前讲解',
+      value: overview.current_product_id || '未设置商品',
+      icon: 'shopping-cart'
+    },
+    {
+      key: 'interaction',
+      label: '互动频率',
+      value: `${Number(overview.interaction_rate || 0).toFixed(2)}/分钟`,
+      icon: 'activity',
+      trend: buildTrend(overview.interaction_rate, previousOverview.value?.interaction_rate, '/分钟')
+    },
+    {
+      key: 'conversion',
+      label: '转化率',
+      value: `${Number(overview.conversion_rate || 0).toFixed(2)}%`,
+      icon: 'trending-up',
+      trend: buildTrend(overview.conversion_rate, previousOverview.value?.conversion_rate, '%')
+    }
+  ]
+})
+
+const qaTimeline = computed(() => {
+  const items = [...workspace.activeQaHistory]
+
+  if (workspace.isStreaming && workspace.streamingKey === 'qa') {
+    const latestUser = [...workspace.activeMessages].reverse().find((item) => item.role === 'user')
+    const currentAnswer = workspace.actionCenter.qa?.content || ''
+    if (latestUser && currentAnswer) {
+      items.push({
+        id: `streaming-${latestUser.id}`,
+        question: latestUser.content,
+        answer: currentAnswer,
+        references: workspace.actionCenter.qa?.references || [],
+        type: workspace.actionCenter.qa?.metadata?.response_kind === 'direct' ? 'Direct' : 'RAG',
+        tagTone: workspace.actionCenter.qa?.metadata?.response_kind === 'direct' ? 'stream' : 'rag',
+        streaming: true,
+        createdAt: new Date().toISOString(),
+        timeLabel: '刚刚',
+        citation: buildCitation(
+          workspace.actionCenter.qa?.references || [],
+          workspace.actionCenter.qa?.metadata?.response_kind
+        )
+      })
+    }
+  }
+
+  return items
+    .filter((item) => !dismissedQaHistoryIds.value.includes(item.id))
+    .slice(-10)
+    .reverse()
+    .map((item) => ({
+      ...item,
+      timeLabel: item.timeLabel || formatRelativeTime(item.createdAt)
+    }))
+})
+
+function buildTrend(currentValue, previousValue, suffix = '') {
+  if (previousValue === null || previousValue === undefined) {
+    return null
+  }
+
+  const current = Number(currentValue || 0)
+  const previous = Number(previousValue || 0)
+  const delta = current - previous
+
+  if (Math.abs(delta) < 0.01) {
+    return { direction: 'flat', label: '持平' }
+  }
+
+  return {
+    direction: delta > 0 ? 'up' : 'down',
+    label: `${delta > 0 ? '↑' : '↓'} ${Math.abs(delta).toFixed(2)}${suffix}`
+  }
+}
+
+function formatRelativeTime(value) {
+  if (!value) {
+    return '刚刚'
+  }
+
+  const target = new Date(value).getTime()
+  if (Number.isNaN(target)) {
+    return '刚刚'
+  }
+
+  const diffMs = Date.now() - target
+  if (diffMs < 60_000) {
+    return '刚刚'
+  }
+
+  const diffMinutes = Math.floor(diffMs / 60_000)
+  if (diffMinutes < 60) {
+    return `${diffMinutes} 分钟前`
+  }
+
+  const diffHours = Math.floor(diffMinutes / 60)
+  if (diffHours < 24) {
+    return `${diffHours} 小时前`
+  }
+
+  return `${Math.floor(diffHours / 24)} 天前`
+}
+
+function buildCitation(references, responseKind) {
+  if (Array.isArray(references) && references.length) {
+    return `引用 ${references.length} 条知识片段`
+  }
+  if (responseKind === 'direct') {
+    return '快速直答，无需知识库检索'
+  }
+  return '引用系统问答记录'
+}
 
 function updateDraft(cardKey, value) {
   editorDrafts[cardKey] = value
 }
 
+function resolveDraft(card) {
+  return editorDrafts[card.key] !== undefined ? editorDrafts[card.key] : card.content
+}
+
 async function fillPrompt(prompt) {
-  commandInput.value = prompt
-  await nextTick()
-  commandInputRef.value?.focus()
+  const nextPrompt = String(prompt || '').trim()
+  if (!nextPrompt) {
+    return
+  }
+
+  if (!workspace.isStreaming && !workspace.queueProcessing && !commandInput.value.trim()) {
+    commandInput.value = nextPrompt
+    await nextTick()
+    commandInputRef.value?.focus()
+    return
+  }
+
+  workspace.enqueueCommand(nextPrompt, 'priority')
 }
 
 function getOpsPlans(card) {
@@ -433,89 +652,144 @@ async function submitCommand() {
   if (!value) {
     return
   }
-  await workspace.sendMessage(value)
+
+  await workspace.sendMessage(value, 'manual')
   commandInput.value = ''
+  await nextTick()
+  commandInputRef.value?.focus()
+}
+
+function qaBadgeLabel(card) {
+  if (workspace.slowRequest && workspace.streamingKey === 'qa') {
+    return '响应较慢'
+  }
+  if (workspace.awaitingFirstToken && workspace.streamingKey === 'qa') {
+    return '处理中'
+  }
+  if (workspace.isStreaming && workspace.streamingKey === 'qa') {
+    return '流式生成中'
+  }
+  if (card?.metadata?.response_kind === 'direct') {
+    return '快速直答'
+  }
+  if (Array.isArray(card.references) && card.references.length) {
+    return `引用 ${card.references.length} 条知识片段`
+  }
+  return '等待新的 QA 请求'
+}
+
+function qaBadgeClass() {
+  if (workspace.slowRequest && workspace.streamingKey === 'qa') {
+    return 'studio-v2__action-badge--slow'
+  }
+  if (workspace.awaitingFirstToken && workspace.streamingKey === 'qa') {
+    return 'studio-v2__action-badge--pending'
+  }
+  if (workspace.isStreaming && workspace.streamingKey === 'qa') {
+    return 'studio-v2__action-badge--streaming'
+  }
+  return ''
+}
+
+async function selectSession(sessionId) {
+  dismissedQaHistoryIds.value = []
+  await workspace.loadMessages(sessionId)
 }
 
 async function playTts(card) {
-  const text = editorDrafts[card.key] ?? card.content
+  const text = resolveDraft(card)
   await workspace.playTts(card.key, text)
 }
 
-function buildTeleprompterPayload(card) {
-  if (card.key === 'ops') {
-    const plans = getOpsPlans(card)
-    const selected = plans.find((item) => item.id === selectedPlans[card.key]) || plans[0]
-    return {
-      title: `${card.title} · ${selected?.title || '策略建议'}`,
-      content: selected?.prompt || selected?.summary || editorDrafts[card.key] || card.content,
-      source_agent: 'ops',
-      priority: 'high',
-      metadata: {
-        trigger: card.metadata?.trigger || 'strategy'
-      }
-    }
-  }
-
-  if (card.key === 'guardrail') {
-    return {
-      title: `${card.title} · 紧急补救`,
-      content: editorDrafts[card.key] ?? card.content,
-      source_agent: 'guardrail',
-      priority: 'urgent',
-      metadata: {
-        rule: card.metadata?.rule || card.detail
-      }
-    }
-  }
-
+function buildTeleprompterPayload(item, sourceAgent) {
   return {
-    title: `${card.title} · ${card.subtitle}`,
-    content: editorDrafts[card.key] ?? card.content,
-    source_agent: 'qa',
-    priority: 'normal',
-    metadata: {
-      references: card.references || []
-    }
+    title: item.question || item.title || '直播提词内容',
+    content: item.answer || item.content || '',
+    source_agent: sourceAgent,
+    priority: item.streaming ? 'high' : 'normal'
   }
 }
 
 async function pushCardToTeleprompter(card) {
-  await workspace.pushTeleprompter(card.key, buildTeleprompterPayload(card))
+  await workspace.pushTeleprompter(card.key, {
+    title: `${card.title} · ${card.subtitle}`,
+    content: resolveDraft(card),
+    source_agent: card.key,
+    priority: card.key === 'guardrail' ? 'high' : 'normal'
+  })
+}
+
+async function pushQaHistoryToTeleprompter(item) {
+  await workspace.pushTeleprompter('qa', buildTeleprompterPayload(item, item.type === 'Direct' ? 'direct' : 'qa'))
+}
+
+function dismissQaHistoryItem(itemId) {
+  if (!dismissedQaHistoryIds.value.includes(itemId)) {
+    dismissedQaHistoryIds.value = [...dismissedQaHistoryIds.value, itemId]
+  }
+}
+
+async function copyQaHistoryAnswer(item) {
+  if (item.answer && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(item.answer)
+  }
+}
+
+function resolveOpsPrompt(card) {
+  const planId = selectedPlans[card.key] || 'A'
+  const target = getOpsPlans(card).find((item) => item.id === planId)
+  return target?.prompt || target?.summary || card.content
 }
 
 async function executeOpsPlan(card) {
-  const plans = getOpsPlans(card)
-  const selected = plans.find((item) => item.id === selectedPlans[card.key]) || plans[0]
-  if (!selected?.prompt) {
+  const prompt = resolveOpsPrompt(card)
+  if (!prompt) {
     return
   }
-  await fillPrompt(selected.prompt)
+  await workspace.sendMessage(prompt, 'ops-plan')
 }
 
-async function selectSession(sessionId) {
-  await workspace.loadMessages(sessionId)
+function openLiveSimulator() {
+  window.open('/live-simulator', '_blank', 'noopener')
 }
 
 function openTeleprompterPreview() {
   workspace.openTeleprompterPreview()
 }
 
-async function scrollBarrages() {
-  await nextTick()
-  barrageEndRef.value?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-}
-
 watch(
   () => workspace.rawBarrages.length,
+  async () => {
+    await nextTick()
+    const el = rawListRef.value
+    if (el) {
+      el.scrollTop = el.scrollHeight
+    }
+  }
+)
+
+watch(
+  () => [workspace.overview.interaction_rate, workspace.overview.conversion_rate],
   () => {
-    scrollBarrages()
+    previousOverview.value = {
+      interaction_rate: workspace.overview.interaction_rate,
+      conversion_rate: workspace.overview.conversion_rate
+    }
+  },
+  { immediate: true }
+)
+
+watch(
+  () => [workspace.actionCenter.qa?.content, workspace.actionCenter.guardrail?.content, workspace.actionCenter.ops?.content],
+  () => {
+    editorDrafts.qa = undefined
+    editorDrafts.guardrail = undefined
+    editorDrafts.ops = undefined
   }
 )
 
 onMounted(async () => {
   await workspace.bootstrap()
-  await scrollBarrages()
 })
 
 onBeforeUnmount(() => {

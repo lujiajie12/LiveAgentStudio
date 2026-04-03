@@ -16,6 +16,15 @@ import {
 import { readStudioToken, readStudioUser } from '@/utils/studioAuth'
 
 const DEFAULT_SESSION_ID = 'studio-live-room-001'
+const MAX_RAW_BARRAGES = 400
+
+function shortenText(text, limit = 18) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim()
+  if (!normalized) {
+    return ''
+  }
+  return normalized.length > limit ? `${normalized.slice(0, limit)}...` : normalized
+}
 
 function stageLabel(stage) {
   return (
@@ -32,8 +41,8 @@ function createLiveSession() {
   return {
     id: DEFAULT_SESSION_ID,
     title: '当前直播会话',
-    subtitle: `SKU-001 · ${stageLabel('intro')}`,
-    current_product_id: 'SKU-001',
+    subtitle: '待同步商品 · ' + stageLabel('intro'),
+    current_product_id: null,
     live_stage: 'intro',
     status: 'live'
   }
@@ -51,7 +60,7 @@ function createHistorySessions(traces, activeSessionId) {
       id: trace.session_id,
       title: `历史会话 ${sessions.length + 1}`,
       subtitle: trace.session_id,
-      current_product_id: 'SKU-001',
+      current_product_id: null,
       live_stage: 'pitch',
       status: trace.degraded_count ? 'warning' : 'history'
     })
@@ -66,7 +75,7 @@ function defaultOverview() {
   return {
     session_id: DEFAULT_SESSION_ID,
     online_viewers: 0,
-    current_product_id: 'SKU-001',
+    current_product_id: null,
     live_stage: 'intro',
     interaction_rate: 0,
     conversion_rate: 0,
@@ -134,7 +143,7 @@ function defaultActionCards() {
       tone: 'yellow',
       status: 'idle',
       editable: true,
-      content: '当前暂无运营控场建议。可从左侧高优问题区或 RAG 卡片输入框触发 Script Agent。',
+      content: '当前暂无运营控场建议。可以从左侧高优问题区或 RAG 卡片输入框触发 Script Agent。',
       detail: '等待新的控场脚本输出',
       references: [],
       metadata: {
@@ -160,24 +169,69 @@ function mapIntentToActionKey(intent) {
   return 'qa'
 }
 
+function qaCardIsPlaceholder(card) {
+  const template = defaultActionCards().qa
+  return !card || card.status === 'idle' || !card.content || card.content === template.content
+}
+
+function qaCardTimestamp(card) {
+  const value = card?.metadata?.message_created_at
+  if (!value) {
+    return 0
+  }
+  const timestamp = new Date(value).getTime()
+  return Number.isFinite(timestamp) ? timestamp : 0
+}
+
+function shouldKeepCurrentQaCard(currentQa, incomingQa, isStreamingQa = false) {
+  if (!currentQa || qaCardIsPlaceholder(currentQa)) {
+    return false
+  }
+
+  if (isStreamingQa) {
+    return true
+  }
+
+  if (qaCardIsPlaceholder(incomingQa)) {
+    return true
+  }
+
+  const currentTimestamp = qaCardTimestamp(currentQa)
+  const incomingTimestamp = qaCardTimestamp(incomingQa)
+
+  if (currentTimestamp && !incomingTimestamp) {
+    return true
+  }
+
+  return currentTimestamp > incomingTimestamp
+}
+
 function normalizeActionCardFromMessage(message) {
   const metadata = message.metadata || {}
-  const intent = message.intent || metadata.agent_name || message.agent_name || 'qa'
+  const intent = metadata.agent_name || message.agent_name || metadata.response_kind || message.intent || 'qa'
+  const isDirect = intent === 'direct' || intent === 'direct_reply'
 
-  if (intent === 'qa') {
+  if (intent === 'qa' || isDirect) {
     return {
       key: 'qa',
       title: 'RAG 知识 Agent',
-      subtitle: '实时解答',
+      subtitle: isDirect ? '快速直答' : '实时解答',
       tone: 'indigo',
       status: metadata.unresolved ? 'warning' : 'ready',
       editable: true,
       content: message.content || '',
-      detail: metadata.unresolved
-        ? '知识库命中不足，建议人工复核'
-        : `引用 ${metadata.references?.length || 0} 条知识片段`,
+      detail: isDirect
+        ? '直接回复，无需知识库检索'
+        : metadata.unresolved
+          ? '知识库命中不足，建议人工复核'
+          : `引用 ${metadata.references?.length || 0} 条知识片段`,
       references: metadata.references || [],
-      metadata
+      metadata: {
+        ...metadata,
+        message_id: message.id,
+        message_created_at: message.created_at || new Date().toISOString(),
+        response_kind: isDirect ? 'direct' : 'qa'
+      }
     }
   }
 
@@ -274,6 +328,42 @@ function normalizeBarrage(item) {
   }
 }
 
+function resolveHistoryAgentName(message) {
+  const metadata = message?.metadata || {}
+  return metadata.agent_name || message?.agent_name || metadata.response_kind || message?.intent || ''
+}
+
+function buildHistoryCitation(message) {
+  const metadata = message?.metadata || {}
+  const references = metadata.references
+  if (Array.isArray(references) && references.length) {
+    return `引用 ${references.length} 条知识片段`
+  }
+  if (resolveHistoryAgentName(message) === 'direct' || resolveHistoryAgentName(message) === 'direct_reply') {
+    return '快速直答，无需知识库检索'
+  }
+  return '引用系统问答记录'
+}
+
+function buildQaHistoryEntry(message, question = '') {
+  const agentName = resolveHistoryAgentName(message)
+  if (!['qa', 'direct', 'direct_reply'].includes(agentName)) {
+    return null
+  }
+
+  return {
+    id: message.id,
+    question: question || '',
+    answer: message.content || '',
+    references: message.metadata?.references || [],
+    type: agentName === 'qa' ? 'RAG' : 'Direct',
+    tagTone: agentName === 'qa' ? 'rag' : 'stream',
+    createdAt: message.created_at || new Date().toISOString(),
+    citation: buildHistoryCitation(message),
+    messageId: message.id
+  }
+}
+
 function upsertMessages(existing, incoming) {
   const indexById = new Map(existing.map((item, index) => [item.id, index]))
   const next = existing.slice()
@@ -302,6 +392,7 @@ export const useWorkspaceStore = defineStore('workspace', {
     priorityQueue: [],
     actionCenter: defaultActionCards(),
     rawBarrages: [],
+    qaHistoryBySession: {},
     isStreaming: false,
     error: '',
     refreshTimerId: null,
@@ -313,7 +404,13 @@ export const useWorkspaceStore = defineStore('workspace', {
     streamingKey: '',
     currentTraceId: '',
     ttsBusyKeys: [],
-    teleprompterBusyKeys: []
+    teleprompterBusyKeys: [],
+    queuedCommands: [],
+    queueProcessing: false,
+    awaitingFirstToken: false,
+    slowRequest: false,
+    slowTimerId: null,
+    activeRequestText: ''
   }),
   getters: {
     activeSession(state) {
@@ -321,6 +418,9 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
     activeMessages(state) {
       return state.messagesBySession[state.activeSessionId] || []
+    },
+    activeQaHistory(state) {
+      return state.qaHistoryBySession[state.activeSessionId] || []
     },
     topMetrics(state) {
       return [
@@ -333,7 +433,7 @@ export const useWorkspaceStore = defineStore('workspace', {
         {
           key: 'product',
           label: '当前讲解',
-          value: state.overview.current_product_id || 'SKU-001',
+          value: state.overview.current_product_id || '未设置商品',
           icon: 'shopping-cart'
         },
         {
@@ -351,9 +451,37 @@ export const useWorkspaceStore = defineStore('workspace', {
       ]
     },
     agentStatuses(state) {
-      return state.overview.agent_status_summary?.length
+      const base = state.overview.agent_status_summary?.length
         ? state.overview.agent_status_summary
         : defaultOverview().agent_status_summary
+
+      return base.map((item) => {
+        const next = { ...item }
+
+        if (next.key === 'qa') {
+          if (state.awaitingFirstToken) {
+            next.status = state.slowRequest ? 'degraded' : 'busy'
+            next.detail = state.slowRequest
+              ? `响应较慢 · ${shortenText(state.activeRequestText, 14) || '仍在生成'}`
+              : `处理中 · ${shortenText(state.activeRequestText, 14) || '等待首个响应'}`
+          } else if (state.isStreaming || state.queueProcessing) {
+            next.status = 'busy'
+            next.detail = state.queuedCommands.length
+              ? `流式输出中 · 队列 ${state.queuedCommands.length}`
+              : '流式输出中...'
+          } else if (state.queuedCommands.length) {
+            next.status = 'busy'
+            next.detail = `待处理 ${state.queuedCommands.length} 条，按点击顺序排队`
+          }
+        }
+
+        if (next.key === 'ops' && state.priorityQueue.length) {
+          next.status = state.priorityQueue.length > 3 ? 'busy' : next.status
+          next.detail = `最近 ${state.priorityQueue.length} 条待处理直播事件`
+        }
+
+        return next
+      })
     },
     priorityCards(state) {
       return state.priorityQueue.filter((item) => !state.dismissedPriorityIds.includes(item.id))
@@ -376,9 +504,9 @@ export const useWorkspaceStore = defineStore('workspace', {
     },
     updateLiveSessionFromOverview() {
       const session = this.ensureLiveSession()
-      session.current_product_id = this.overview.current_product_id || session.current_product_id
-      session.live_stage = this.overview.live_stage || session.live_stage
-      session.subtitle = `${session.current_product_id || 'SKU-001'} · ${stageLabel(session.live_stage)}`
+      session.current_product_id = this.overview.current_product_id ?? null
+      session.live_stage = this.overview.live_stage ?? session.live_stage
+      session.subtitle = (session.current_product_id || '待同步商品') + ' · ' + stageLabel(session.live_stage)
     },
     syncSessionsWithTraces() {
       this.updateLiveSessionFromOverview()
@@ -404,6 +532,10 @@ export const useWorkspaceStore = defineStore('workspace', {
       if (this.priorityRefreshTimerId) {
         window.clearTimeout(this.priorityRefreshTimerId)
         this.priorityRefreshTimerId = null
+      }
+      if (this.slowTimerId) {
+        window.clearTimeout(this.slowTimerId)
+        this.slowTimerId = null
       }
       if (this.barrageSocket) {
         this.barrageSocket.close()
@@ -454,11 +586,11 @@ export const useWorkspaceStore = defineStore('workspace', {
         try {
           const payload = JSON.parse(event.data)
           if (payload.type === 'snapshot') {
-            this.rawBarrages = (payload.items || []).map(normalizeBarrage).slice(-30)
+            this.rawBarrages = (payload.items || []).map(normalizeBarrage).slice(-MAX_RAW_BARRAGES)
             return
           }
           if (payload.type === 'barrage' && payload.item) {
-            this.rawBarrages = [...this.rawBarrages.slice(-29), normalizeBarrage(payload.item)]
+            this.rawBarrages = [...this.rawBarrages.slice(-(MAX_RAW_BARRAGES - 1)), normalizeBarrage(payload.item)]
             this.schedulePriorityRefresh()
             return
           }
@@ -470,8 +602,8 @@ export const useWorkspaceStore = defineStore('workspace', {
             this.syncSessionsWithTraces()
           }
         } catch (error) {
-          this.error = error?.message || '弹幕流数据解析失败。'
-        }
+        this.error = error?.message || 'Failed to send request. Please check the backend.'
+      }
       }
 
       socket.onclose = () => {
@@ -524,6 +656,11 @@ export const useWorkspaceStore = defineStore('workspace', {
       for (const card of payload?.cards || []) {
         cards[card.key] = card
       }
+      const currentQa = this.actionCenter.qa
+      const isStreamingQa = this.isStreaming && this.streamingKey === 'qa'
+      if (shouldKeepCurrentQaCard(currentQa, cards.qa, isStreamingQa)) {
+        cards.qa = currentQa
+      }
       this.actionCenter = cards
       this.dismissedActionKeys = []
     },
@@ -531,6 +668,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.activeSessionId = sessionId
       const messages = await fetchStudioMessages(sessionId)
       this.messagesBySession[sessionId] = messages
+      this.hydrateQaHistoryFromMessages(sessionId, messages)
       await Promise.allSettled([
         this.refreshPriorityQueue(),
         this.refreshActionCenter(),
@@ -570,9 +708,86 @@ export const useWorkspaceStore = defineStore('workspace', {
         this.dismissedActionKeys = [...this.dismissedActionKeys, actionKey]
       }
     },
+    enqueueCommand(text, source = 'manual') {
+      const content = String(text || '').trim()
+      if (!content) {
+        return null
+      }
+      const entry = {
+        id: `queue-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        text: content,
+        source,
+        created_at: new Date().toISOString()
+      }
+      this.queuedCommands = [...this.queuedCommands, entry]
+      return entry
+    },
+    removeQueuedCommand(commandId) {
+      this.queuedCommands = this.queuedCommands.filter((item) => item.id !== commandId)
+    },
+    setPendingRequestState(content) {
+      this.activeRequestText = content
+      this.awaitingFirstToken = true
+      this.slowRequest = false
+
+      if (this.slowTimerId) {
+        window.clearTimeout(this.slowTimerId)
+      }
+
+      this.slowTimerId = window.setTimeout(() => {
+        if (this.awaitingFirstToken && this.activeRequestText === content) {
+          this.slowRequest = true
+        }
+      }, 4500)
+    },
+    markFirstTokenReceived() {
+      if (this.slowTimerId) {
+        window.clearTimeout(this.slowTimerId)
+        this.slowTimerId = null
+      }
+      this.awaitingFirstToken = false
+      this.slowRequest = false
+    },
+    clearPendingRequestState() {
+      if (this.slowTimerId) {
+        window.clearTimeout(this.slowTimerId)
+        this.slowTimerId = null
+      }
+      this.awaitingFirstToken = false
+      this.slowRequest = false
+      this.activeRequestText = ''
+    },
     upsertSessionMessages(sessionId, messages) {
       const existing = this.messagesBySession[sessionId] || []
-      this.messagesBySession[sessionId] = upsertMessages(existing, messages)
+      const merged = upsertMessages(existing, messages)
+      this.messagesBySession[sessionId] = merged
+      this.hydrateQaHistoryFromMessages(sessionId, merged)
+    },
+    hydrateQaHistoryFromMessages(sessionId, messages) {
+      const items = []
+      let pendingQuestion = ''
+
+      for (const message of messages || []) {
+        if (message.role === 'user') {
+          pendingQuestion = message.content || ''
+          continue
+        }
+
+        if (message.role !== 'assistant') {
+          continue
+        }
+
+        const entry = buildQaHistoryEntry(message, pendingQuestion)
+        if (entry) {
+          items.push(entry)
+        }
+        pendingQuestion = ''
+      }
+
+      this.qaHistoryBySession = {
+        ...this.qaHistoryBySession,
+        [sessionId]: items.slice(-20)
+      }
     },
     primeStreamingCard(intent, userInput) {
       const key = mapIntentToActionKey(intent)
@@ -585,7 +800,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           status: 'streaming',
           tone: key === 'ops' ? 'yellow' : 'indigo',
           content: '',
-          detail: `正在处理：${userInput.slice(0, 24)}${userInput.length > 24 ? '...' : ''}`
+          detail: `处理中 · ${shortenText(userInput, 24)}`
         }
       }
       this.dismissedActionKeys = this.dismissedActionKeys.filter((item) => item !== key)
@@ -606,6 +821,22 @@ export const useWorkspaceStore = defineStore('workspace', {
         }
       }
     },
+    updateStreamingStatus(message) {
+      if (!this.streamingKey) {
+        return
+      }
+      const current = this.actionCenter[this.streamingKey]
+      if (!current) {
+        return
+      }
+      this.actionCenter = {
+        ...this.actionCenter,
+        [this.streamingKey]: {
+          ...current,
+          detail: message || current.detail
+        }
+      }
+    },
     finalizeStreamingMessage(message) {
       const actionCard = normalizeActionCardFromMessage(message)
       const guardrailCard = buildGuardrailCardFromMessage(message)
@@ -617,7 +848,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       this.dismissedActionKeys = []
       this.streamingKey = ''
     },
-    async sendMessage(text) {
+    async executeMessage(text, source = 'manual') {
       const content = String(text || '').trim()
       if (!content) {
         return
@@ -627,6 +858,7 @@ export const useWorkspaceStore = defineStore('workspace', {
       const token = readStudioToken()
       this.error = ''
       this.isStreaming = true
+      this.setPendingRequestState(content)
 
       const optimisticUserMessage = {
         id: `local-user-${Date.now()}`,
@@ -634,7 +866,9 @@ export const useWorkspaceStore = defineStore('workspace', {
         role: 'user',
         content,
         created_at: new Date().toISOString(),
-        metadata: {}
+        metadata: {
+          queued_source: source
+        }
       }
       this.upsertSessionMessages(session.id, [optimisticUserMessage])
 
@@ -644,8 +878,8 @@ export const useWorkspaceStore = defineStore('workspace', {
           payload: {
             session_id: session.id,
             user_input: content,
-            current_product_id: this.overview.current_product_id || session.current_product_id,
-            live_stage: this.overview.live_stage || session.live_stage
+            current_product_id: this.overview.current_product_id ?? null,
+            live_stage: this.overview.live_stage ?? session.live_stage
           },
           onEvent: (event) => {
             if (event.event === 'meta') {
@@ -653,11 +887,17 @@ export const useWorkspaceStore = defineStore('workspace', {
               this.primeStreamingCard(event.data.intent, content)
               return
             }
+            if (event.event === 'status') {
+              this.updateStreamingStatus(event.data.message || '')
+              return
+            }
             if (event.event === 'token') {
+              this.markFirstTokenReceived()
               this.appendStreamingChunk(event.data.content || '')
               return
             }
             if (event.event === 'final') {
+              this.markFirstTokenReceived()
               if (event.data.message) {
                 this.upsertSessionMessages(session.id, [event.data.message])
                 this.finalizeStreamingMessage(event.data.message)
@@ -665,16 +905,54 @@ export const useWorkspaceStore = defineStore('workspace', {
               return
             }
             if (event.event === 'error') {
-              this.error = event.data.message || '请求处理失败，请稍后重试。'
+              this.markFirstTokenReceived()
+              this.error = event.data.message || 'Request failed. Please retry.'
             }
           }
         })
       } catch (error) {
-        this.error = error?.message || '发送失败，请检查后端状态。'
+        this.error = error?.message || 'Failed to send request. Please check the backend.'
       } finally {
         this.isStreaming = false
-        await Promise.allSettled([this.refreshPriorityQueue(), this.refreshActionCenter(), this.refreshDashboard()])
+        this.clearPendingRequestState()
+        await Promise.allSettled([this.refreshPriorityQueue(), this.refreshDashboard()])
       }
+    },
+    async sendMessage(text, source = 'manual') {
+      const content = String(text || '').trim()
+      if (!content) {
+        return { queued: false }
+      }
+
+      if (this.queueProcessing || this.isStreaming) {
+        const entry = this.enqueueCommand(content, source)
+        return { queued: true, entry }
+      }
+
+      this.queueProcessing = true
+      try {
+        let current = { text: content, source }
+
+        while (current) {
+          await this.executeMessage(current.text, current.source)
+
+          const [next] = this.queuedCommands
+          if (!next) {
+            current = null
+            continue
+          }
+
+          this.removeQueuedCommand(next.id)
+          current = {
+            text: next.text,
+            source: next.source
+          }
+        }
+      } finally {
+        this.queueProcessing = false
+      }
+
+      return { queued: false }
     },
     async playTts(cardKey, text) {
       const content = String(text || '').trim()
@@ -700,7 +978,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           window.speechSynthesis.speak(utterance)
         }
       } catch (error) {
-        this.error = error?.message || 'TTS 插播失败。'
+        this.error = error?.message || 'TTS 语音插播失败。'
       } finally {
         this.ttsBusyKeys = this.ttsBusyKeys.filter((item) => item !== cardKey)
       }

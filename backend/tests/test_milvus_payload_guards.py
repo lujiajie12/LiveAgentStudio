@@ -89,6 +89,31 @@ async def test_insert_chunks_splits_and_sanitizes_on_payload_limit():
 
 
 @pytest.mark.asyncio
+async def test_insert_chunks_can_delay_flush_until_manual_flush():
+    store = MilvusVectorStore()
+    store.collection = FailingInsertCollection()
+
+    chunks = [
+        DocumentChunk(
+            chunk_id=f"chunk-{index}",
+            document_id="faq.xlsx",
+            chunk_index=index,
+            content="short content",
+            token_count=2,
+            metadata={"source_file": "faq.xlsx", "page_number": index},
+        )
+        for index in range(2)
+    ]
+    embeddings = [[0.1, 0.2, 0.3, 0.4] for _ in chunks]
+
+    await store.insert_chunks(chunks, embeddings, flush=False)
+    assert store.collection.flush_count == 0
+
+    await store.flush()
+    assert store.collection.flush_count == 1
+
+
+@pytest.mark.asyncio
 async def test_search_loads_collection_before_query():
     store = MilvusVectorStore()
     store.collection = SearchCollection()

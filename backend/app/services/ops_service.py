@@ -12,7 +12,7 @@ from app.services.memory_service import MemoryService
 
 
 class OpsService:
-    """为 Studio v2 页面聚合高优意图、动作卡片和运维追踪数据。"""
+    """聚合 Studio v2 页面所需的高优意图、动作卡片和追踪数据。"""
 
     def __init__(
         self,
@@ -30,8 +30,6 @@ class OpsService:
         self.barrage_repository = barrage_repository
 
     async def list_recent_traces(self, limit: int = 20) -> list[dict[str, Any]]:
-        """按 trace 聚合最近的工具调用，供 Agent Flow 和首页状态条使用。"""
-
         logs = await self.tool_log_repository.list_recent(limit=limit * 20)
         grouped: dict[str, list[ToolCallLogRecord]] = defaultdict(list)
         for log in logs:
@@ -54,12 +52,11 @@ class OpsService:
                     "degraded_count": sum(1 for item in items if item.status == "degraded"),
                 }
             )
+
         traces.sort(key=lambda item: item["updated_at"], reverse=True)
         return traces[:limit]
 
     async def get_trace_detail(self, trace_id: str) -> dict[str, Any]:
-        """返回单条 trace 的完整节点日志和该会话的短期记忆快照。"""
-
         logs = await self.tool_log_repository.list_by_trace(trace_id)
         logs.sort(key=lambda item: item.created_at)
         if not logs:
@@ -88,8 +85,6 @@ class OpsService:
         }
 
     async def get_priority_queue(self, session_id: str, limit: int = 3) -> list[dict[str, Any]]:
-        """对当前会话里的用户问题做轻量聚类，产出高优意图卡片。"""
-
         barrages = await self.barrage_repository.list_recent_by_session(session_id, limit=120)
         cards = self._build_priority_cards(list(reversed(barrages)))
         if not cards:
@@ -97,12 +92,10 @@ class OpsService:
         return cards[:limit]
 
     async def get_action_center(self, session_id: str) -> dict[str, Any]:
-        """聚合右侧三块动作卡：QA、Guardrail、运营控场。"""
-
         messages = await self.message_repository.list_by_session(session_id)
         assistant_messages = [item for item in messages if item.role == MessageRole.assistant]
         latest_assistant = assistant_messages[-1] if assistant_messages else None
-        latest_qa = self._find_latest_agent_message(assistant_messages, "qa")
+        latest_qa = self._find_latest_qa_message(assistant_messages)
         latest_script = self._find_latest_agent_message(assistant_messages, "script")
         session_record = await self.session_repository.get(session_id)
 
@@ -121,8 +114,6 @@ class OpsService:
         voice: str,
         requested_by: str,
     ) -> dict[str, Any]:
-        """记录一次 TTS 插播请求，真正的播放先走前端本地 Web Speech API。"""
-
         cleaned = text.strip()
         job_id = str(uuid4())
         now = datetime.utcnow()
@@ -153,37 +144,38 @@ class OpsService:
             "message": "已接收 TTS 插播请求，前端可直接使用浏览器语音播报。",
         }
 
-    def _build_priority_cards(self, messages: list[LiveBarrageEventRecord]) -> list[dict[str, Any]]:
+    def _build_priority_cards(self, barrages: list[LiveBarrageEventRecord]) -> list[dict[str, Any]]:
         counts: Counter[str] = Counter()
         latest_by_key: dict[str, LiveBarrageEventRecord] = {}
 
-        for message in messages:
-            key = self._normalize_priority_key(message.text)
+        for barrage in barrages:
+            key = self._normalize_priority_key(barrage.text)
             if not key:
                 continue
             counts[key] += 1
-            latest_by_key[key] = message
+            latest_by_key[key] = barrage
 
         ordered: list[dict[str, Any]] = []
-        for message in sorted(latest_by_key.values(), key=lambda item: item.created_at, reverse=True):
-            key = self._normalize_priority_key(message.text)
+        for barrage in sorted(latest_by_key.values(), key=lambda item: item.created_at, reverse=True):
+            key = self._normalize_priority_key(barrage.text)
             if not key:
                 continue
-            label, tone, recommended_intent = self._classify_priority(message.text)
-            summary = f"请帮我处理这个直播间问题：{message.text.strip()}"
+            label, tone, recommended_intent = self._classify_priority(barrage.text)
+            summary = f"请帮我处理这个直播间问题：{barrage.text.strip()}"
             ordered.append(
                 {
-                    "id": f"priority-{message.id}",
+                    "id": f"priority-{barrage.id}",
                     "label": label,
                     "tone": tone,
                     "frequency": f"{max(counts[key], 1)}次/分钟",
                     "summary": summary,
                     "prompt": summary,
-                    "source_message_id": message.id,
+                    "source_message_id": barrage.id,
                     "recommended_intent": recommended_intent,
-                    "created_at": message.created_at.isoformat(),
+                    "created_at": barrage.created_at.isoformat(),
                 }
             )
+
         return ordered
 
     def _build_fallback_priority_cards(self) -> list[dict[str, Any]]:
@@ -227,21 +219,33 @@ class OpsService:
             }
 
         metadata = message.metadata or {}
+        agent_name = message.agent_name or metadata.get("agent_name") or message.intent or "qa"
+        is_direct = agent_name in {"direct", "direct_reply"}
         references = metadata.get("references", [])
-        detail = f"引用 {len(references)} 条知识片段"
-        if metadata.get("unresolved"):
-            detail = "未完全命中知识库，建议人工复核"
+
+        if is_direct:
+          detail = "直接回复，无需知识库检索"
+        elif metadata.get("unresolved"):
+          detail = "知识库命中不足，建议人工复核"
+        else:
+          detail = f"引用 {len(references)} 条知识片段"
+
         return {
             "key": "qa",
             "title": "RAG 知识 Agent",
-            "subtitle": "实时解答",
+            "subtitle": "快速直答" if is_direct else "实时解答",
             "tone": "indigo",
             "status": "ready",
             "editable": True,
             "content": message.content,
             "detail": detail,
             "references": references,
-            "metadata": metadata,
+            "metadata": {
+                **metadata,
+                "message_id": message.id,
+                "message_created_at": message.created_at.isoformat(),
+                "response_kind": "direct" if is_direct else "qa",
+            },
         }
 
     def _build_guardrail_card(self, message: MessageRecord | None) -> dict[str, Any]:
@@ -318,27 +322,32 @@ class OpsService:
         script_message: MessageRecord | None,
         messages: list[MessageRecord],
     ) -> dict[str, Any]:
-        product = getattr(session_record, "current_product_id", None) or "SKU-001"
+        current_product_id = getattr(session_record, "current_product_id", None) or ""
+        product_label = current_product_id or "未设置商品"
+        prompt_product = current_product_id or "当前直播商品"
         stage = getattr(session_record, "live_stage", None) or "intro"
         user_count = sum(1 for item in messages if item.role == MessageRole.user)
+
         plans = [
             {
                 "id": "A",
                 "title": "方案 A：紧急逼单",
                 "summary": "强调库存、优惠和限时信息，快速推动最后一轮转化。",
-                "prompt": f"帮我生成一段{product}的逼单话术，当前直播阶段是{stage}，强调库存紧张和优惠节奏。",
+                "prompt": f"帮我生成一段{prompt_product}的逼单话术，当前直播阶段是{stage}，强调库存紧张和优惠节奏。",
             },
             {
                 "id": "B",
                 "title": "方案 B：福利互动",
                 "summary": "发起评论区互动或截屏福利，先拉停留和参与，再承接下一个卖点。",
-                "prompt": f"帮我生成一段{product}的互动留存话术，当前直播阶段是{stage}，用福利互动把观众留在直播间。",
+                "prompt": f"帮我生成一段{prompt_product}的互动留存话术，当前直播阶段是{stage}，用福利互动把观众留在直播间。",
             },
         ]
 
+        insight = f"当前会话已累计 {user_count} 条用户消息，直播阶段为 {stage}，当前讲解商品为 {product_label}。"
+
         if script_message:
             metadata = script_message.metadata or {}
-            detail = metadata.get("script_reason") or "最近一次控场话术已生成，可推送提词器或进行 TTS 插播。"
+            detail = metadata.get("script_reason") or "最近一条控场话术已生成，可继续推送提词器或进行 TTS 插播。"
             return {
                 "key": "ops",
                 "title": "运营控场编排",
@@ -351,13 +360,13 @@ class OpsService:
                 "references": metadata.get("references", []),
                 "metadata": {
                     **metadata,
-                    "trigger": "互动率下降",
-                    "insight": f"当前会话已累计 {user_count} 条用户消息，商品 {product} 处于 {stage} 阶段，建议快速做流量干预。",
+                    "trigger": "互动率波动",
+                    "insight": insight,
                     "plans": [
                         {
                             "id": "A",
                             "title": "方案 A：执行当前脚本",
-                            "summary": "使用最新生成的控场脚本，直接承接当下节奏。",
+                            "summary": "使用最近一次生成的话术，直接承接当前直播节奏。",
                             "prompt": script_message.content,
                         },
                         plans[1],
@@ -366,8 +375,7 @@ class OpsService:
             }
 
         content = (
-            f"当前会话已积累 {user_count} 条用户问题，直播阶段为 {stage}，当前讲解商品为 {product}。"
-            " 如需控场话术，可在左侧高优问题区或底部指令栏触发 Script Agent。"
+            f"{insight} 如需控场话术，可从左侧高优问题区或 RAG 卡片输入框触发 Script Agent。"
         )
         return {
             "key": "ops",
@@ -380,20 +388,24 @@ class OpsService:
             "detail": "当前暂无新的控场脚本输出",
             "references": [],
             "metadata": {
-                "trigger": "互动率下降",
-                "insight": f"当前会话已累计 {user_count} 条用户消息，商品 {product} 处于 {stage} 阶段，可考虑做逼单或福利互动。",
+                "trigger": "策略建议",
+                "insight": insight,
                 "plans": plans,
             },
         }
 
-    def _find_latest_agent_message(
-        self,
-        messages: list[MessageRecord],
-        agent_name: str,
-    ) -> MessageRecord | None:
+    def _find_latest_agent_message(self, messages: list[MessageRecord], agent_name: str) -> MessageRecord | None:
         for message in reversed(messages):
             metadata = message.metadata or {}
             if message.agent_name == agent_name or metadata.get("agent_name") == agent_name or message.intent == agent_name:
+                return message
+        return None
+
+    def _find_latest_qa_message(self, messages: list[MessageRecord]) -> MessageRecord | None:
+        for message in reversed(messages):
+            metadata = message.metadata or {}
+            agent_name = message.agent_name or metadata.get("agent_name") or message.intent or ""
+            if agent_name in {"qa", "direct", "direct_reply"}:
                 return message
         return None
 

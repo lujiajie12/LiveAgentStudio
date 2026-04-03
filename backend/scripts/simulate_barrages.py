@@ -27,7 +27,7 @@ def parse_args():
     parser.add_argument("--username", default="demo-operator", help="用于登录的直播工作人员账号")
     parser.add_argument("--password", default="demo", help="登录密码")
     parser.add_argument("--role", default="operator", help="登录角色")
-    parser.add_argument("--product-id", default="SKU-001", help="当前直播商品 ID")
+    parser.add_argument("--product-id", default="", help="当前直播商品 ID，不传则表示未设置商品")
     parser.add_argument("--live-stage", default="intro", help="当前直播阶段")
     parser.add_argument("--interval", type=float, default=1.5, help="两条弹幕之间的秒数")
     parser.add_argument("--online-viewers", type=int, default=12450, help="模拟在线人数")

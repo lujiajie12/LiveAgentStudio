@@ -102,6 +102,7 @@ class MemoryService:
     async def get_memory_snapshot(self, session_id: str) -> dict[str, Any]:
         started_at = time.perf_counter()
         try:
+            # 优先走 Redis 快照，保证在线问答每次进入图之前都能拿到低延迟的短期记忆。
             turns = await self._read_turns_from_redis(session_id)
             if turns:
                 hot_keywords = await self._read_hot_keywords_from_redis(session_id)
@@ -148,6 +149,7 @@ class MemoryService:
         hot_keywords: list[str] | None,
     ) -> None:
         started_at = time.perf_counter()
+        # 短期记忆以消息窗口为单位回写；窗口越大，多轮回溯能力越强，但 token 成本也会更高。
         turns = await self._fallback_turns(session_id)
         turns = turns[-self.window_size :]
         try:
@@ -214,6 +216,7 @@ class MemoryService:
         return [str(item).strip() for item in data if str(item).strip()]
 
     async def _fallback_turns(self, session_id: str) -> list[dict[str, str]]:
+        # Redis 不可用时直接从消息库回放最近窗口，保证记忆能力只降级不消失。
         messages = await self.message_repository.list_by_session(session_id)
         trimmed = messages[-self.window_size :]
         return [{"role": message.role.value, "content": message.content} for message in trimmed]

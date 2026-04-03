@@ -8,18 +8,21 @@
       </div>
       <div class="toolbar">
         <button class="ghost-button" type="button" @click="refresh">刷新概览</button>
-        <button class="primary-button" type="button" @click="startIncremental">启动增量索引</button>
+        <button class="primary-button" type="button" @click="startIncremental">
+          启动增量索引
+        </button>
       </div>
     </header>
 
     <article class="panel">
       <p class="muted">
-        当前版本的离线索引来源固定为 <strong class="stat-card__mono">docs/data</strong>。
-        页面内还没有“上传文档并立即建索引”的完整流程；现有上传接口也尚未接入离线索引任务。
+        当前版本的离线索引默认扫描
+        <strong class="stat-card__mono">docs/data</strong>
+        目录。把 FAQ、商品资料和规则文档替换进去后，可以直接在这里触发重建。
       </p>
       <p class="muted">
         增量索引：不重建现有索引，主要用于续跑或补跑。
-        全量索引：会自动带上重建参数，先清空旧索引再重建。
+        全量索引：会自动带上重建参数，先清空旧索引再重新构建。
       </p>
     </article>
 
@@ -80,6 +83,7 @@
             刷新任务状态
           </button>
         </div>
+        <p v-if="jobStatusText" class="muted">{{ jobStatusText }}</p>
         <p v-if="ragOps.error" class="error-text">{{ ragOps.error }}</p>
       </article>
 
@@ -97,7 +101,7 @@
             <div><span class="muted">PID</span><strong>{{ ragOps.activeJob.pid || '-' }}</strong></div>
             <div><span class="muted">类型</span><strong>{{ ragOps.activeJob.job_type }}</strong></div>
           </div>
-          <pre class="code-block">{{ (ragOps.activeJob.log_tail || []).join('\n') || '暂无日志' }}</pre>
+          <pre class="code-block">{{ activeJobLog }}</pre>
         </div>
         <p v-else class="muted">尚未启动索引任务。</p>
       </article>
@@ -129,12 +133,30 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive } from 'vue'
+import { computed, onMounted, onUnmounted, reactive } from 'vue'
 
 import { useRagOpsStore } from '@/stores/ragOps'
 
 const ragOps = useRagOpsStore()
 const overview = computed(() => ragOps.offlineOverview)
+const activeJob = computed(() => ragOps.activeJob)
+const activeJobLog = computed(() => (activeJob.value?.log_tail || []).join('\n') || '暂无日志')
+const jobStatusText = computed(() => {
+  if (!activeJob.value) {
+    return ''
+  }
+  if (activeJob.value.status === 'running') {
+    return '索引任务运行中，页面会自动刷新状态和日志。'
+  }
+  if (activeJob.value.status === 'completed') {
+    return '索引任务已完成。'
+  }
+  if (activeJob.value.status === 'failed') {
+    return `索引任务失败：${activeJob.value.error_message || '请查看日志'}`
+  }
+  return ''
+})
+
 const jobForm = reactive({
   docs_dir: '',
   reset: false,
@@ -142,8 +164,34 @@ const jobForm = reactive({
   milvus_only: false
 })
 
+let pollTimer = null
+
 async function refresh() {
   await ragOps.loadOfflineOverview()
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+function ensurePolling() {
+  if (!activeJob.value?.id || activeJob.value.status !== 'running' || pollTimer) {
+    return
+  }
+  pollTimer = setInterval(async () => {
+    if (!activeJob.value?.id) {
+      stopPolling()
+      return
+    }
+    await ragOps.refreshOfflineJob(activeJob.value.id)
+    await ragOps.loadOfflineOverview()
+    if (ragOps.activeJob?.status !== 'running') {
+      stopPolling()
+    }
+  }, 2000)
 }
 
 async function startJob(jobType) {
@@ -154,6 +202,7 @@ async function startJob(jobType) {
     es_only: jobForm.es_only,
     milvus_only: jobForm.milvus_only
   })
+  ensurePolling()
 }
 
 async function startIncremental() {
@@ -164,8 +213,14 @@ async function refreshJob() {
   if (ragOps.activeJob?.id) {
     await ragOps.refreshOfflineJob(ragOps.activeJob.id)
     await ragOps.loadOfflineOverview()
+    ensurePolling()
   }
 }
 
-onMounted(refresh)
+onMounted(async () => {
+  await refresh()
+  ensurePolling()
+})
+
+onUnmounted(stopPolling)
 </script>

@@ -28,13 +28,131 @@ sys.path.insert(0, BACKEND_DIR)
 
 from dotenv import load_dotenv
 for _p in [
-    os.path.normpath(os.path.join(BACKEND_DIR, '..', 'deploy', '.env')),
+    # 索引脚本只读取 backend/.env，与应用主配置保持一致。
     os.path.normpath(os.path.join(BACKEND_DIR, '.env')),
+    os.path.normpath(os.path.join(BACKEND_DIR, '..', '.env')),
 ]:
     if os.path.exists(_p):
         load_dotenv(_p)
         logger.info('Loaded env: %s', _p)
         break
+
+
+MILVUS_COLLECTION_NAME = "knowledge_base"
+MILVUS_REBUILD_PREFIX = f"{MILVUS_COLLECTION_NAME}_rebuild_"
+
+
+async def _wait_for_milvus_collection_absent(
+    host: str,
+    port: int,
+    collection_name: str,
+    timeout_seconds: int = 45,
+) -> None:
+    from pymilvus import connections, utility
+
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        try:
+            connections.connect(alias="default", host=host, port=port)
+            if not utility.has_collection(collection_name):
+                await asyncio.sleep(2.0)
+                return
+        except Exception as exc:
+            logger.warning("Waiting for Milvus drop state failed once: %s", exc)
+        await asyncio.sleep(1.0)
+
+    raise RuntimeError(f"Milvus collection {collection_name} still exists after reset wait")
+
+
+async def _wait_for_milvus_collection_ready(
+    host: str,
+    port: int,
+    collection_name: str,
+    timeout_seconds: int = 45,
+) -> None:
+    from pymilvus import Collection, connections, utility
+
+    deadline = time.time() + timeout_seconds
+    last_error = None
+    while time.time() < deadline:
+        try:
+            connections.connect(alias="default", host=host, port=port)
+            if utility.has_collection(collection_name):
+                collection = Collection(collection_name)
+                _ = collection.num_entities
+                await asyncio.sleep(2.0)
+                return
+        except Exception as exc:
+            last_error = exc
+            logger.warning("Waiting for Milvus ready state failed once: %s", exc)
+        await asyncio.sleep(1.5)
+
+    raise RuntimeError(
+        f"Milvus collection {collection_name} not ready after create wait: {last_error}"
+    )
+
+
+async def _wait_for_milvus_entity_count(
+    host: str,
+    port: int,
+    collection_name: str,
+    target_count: int,
+    timeout_seconds: int = 60,
+) -> None:
+    from pymilvus import Collection, connections
+
+    deadline = time.time() + timeout_seconds
+    last_count = None
+    while time.time() < deadline:
+        try:
+            connections.connect(alias="default", host=host, port=port)
+            collection = Collection(collection_name)
+            count = int(collection.num_entities)
+            last_count = count
+            if count == target_count:
+                await asyncio.sleep(1.5)
+                return
+        except Exception as exc:
+            logger.warning("Waiting for Milvus entity count failed once: %s", exc)
+        await asyncio.sleep(1.5)
+
+    raise RuntimeError(
+        f"Milvus collection {collection_name} entity count did not reach {target_count}, "
+        f"last_count={last_count}"
+    )
+
+
+async def _wait_for_milvus_write_path_stable(
+    host: str,
+    port: int,
+    collection_name: str,
+    settle_seconds: int = 10,
+) -> None:
+    from pymilvus import Collection, connections
+
+    deadline = time.time() + settle_seconds
+    last_error = None
+    while time.time() < deadline:
+        try:
+            connections.connect(alias="default", host=host, port=port)
+            collection = Collection(collection_name)
+            _ = collection.schema
+            _ = collection.num_entities
+            last_error = None
+        except Exception as exc:
+            last_error = exc
+            logger.warning("Milvus write path still stabilizing: %s", exc)
+        await asyncio.sleep(1.0)
+
+    if last_error is not None:
+        logger.warning(
+            "Milvus write path did not become fully quiet before timeout, proceeding cautiously: %s",
+            last_error,
+        )
+
+
+def _build_rebuild_collection_name() -> str:
+    return f"{MILVUS_REBUILD_PREFIX}{int(time.time())}"
 
 
 # ---------------------------------------------------------------------------
@@ -124,23 +242,32 @@ def index_elasticsearch(docs, host='localhost', port=9200, reset=False):
 async def index_milvus_async(docs, host='localhost', port=19530, reset=False):
     from app.rag.embedding import BGEEmbeddingModel, MilvusVectorStore
     from app.schemas.document import DocumentChunk
+    from pymilvus import Collection, connections, utility
+
+    target_collection_name = MILVUS_COLLECTION_NAME
+    if reset:
+        target_collection_name = _build_rebuild_collection_name()
+        logger.info(
+            "Reset requested, indexing into fresh Milvus collection first: %s",
+            target_collection_name,
+        )
 
     if reset:
         try:
-            from pymilvus import utility, connections
             connections.connect(host=host, port=port)
-            if utility.has_collection('knowledge_base'):
-                utility.drop_collection('knowledge_base')
-                logger.info('Dropped Milvus collection')
+            if utility.has_collection(MILVUS_COLLECTION_NAME):
+                logger.info(
+                    'Keeping current Milvus collection intact until rebuild succeeds: %s',
+                    MILVUS_COLLECTION_NAME,
+                )
         except Exception as e:
-            logger.warning('Drop failed: %s', e)
+            logger.warning('Failed to inspect current Milvus collection before rebuild: %s', e)
 
     skip = 0
     try:
-        from pymilvus import Collection, utility, connections
         connections.connect(host=host, port=port)
-        if utility.has_collection('knowledge_base'):
-            n = Collection('knowledge_base').num_entities
+        if utility.has_collection(target_collection_name):
+            n = Collection(target_collection_name).num_entities
             if n > 0 and not reset:
                 if n >= len(docs):
                     logger.info('Milvus already has %d vectors, skip', n)
@@ -157,17 +284,32 @@ async def index_milvus_async(docs, host='localhost', port=19530, reset=False):
         device=settings.EMBEDDING_DEVICE,
         batch_size=settings.EMBEDDING_BATCH_SIZE,
     )
-    vector_store = MilvusVectorStore(host=host, port=port)
+    vector_store = MilvusVectorStore(
+        host=host,
+        port=port,
+        collection_name=target_collection_name,
+    )
     await vector_store.connect()
     await vector_store.create_collection()
+    await _wait_for_milvus_collection_ready(host, port, target_collection_name)
+    if reset:
+        logger.info('Waiting for Milvus DML channel to stabilize after reset...')
+        await _wait_for_milvus_write_path_stable(
+            host,
+            port,
+            target_collection_name,
+            settle_seconds=settings.MILVUS_RESET_SETTLE_SECONDS,
+        )
+        await asyncio.sleep(2.0)
 
-    from app.core.config import settings
     logger.info('Vectorizing %d chunks with %s (skip=%d)...', len(docs), settings.EMBEDDING_MODEL, skip)
     t0 = time.time()
 
-    # 小批次 + content 截短，避免 gRPC 64MB 限制
+    # 小批次 embed + 大窗口 flush，避免 reset 后每批都 flush 把 Milvus 写通道打爆。
     batch_size = settings.EMBEDDING_BATCH_SIZE
+    flush_interval_chunks = max(batch_size, int(settings.MILVUS_INDEX_FLUSH_INTERVAL_CHUNKS or batch_size))
     total = skip
+    pending_flush_count = 0
 
     for i in range(skip, len(docs), batch_size):
         batch = docs[i:i+batch_size]
@@ -185,10 +327,50 @@ async def index_milvus_async(docs, host='localhost', port=19530, reset=False):
             )
             for j, d in enumerate(batch)
         ]
-        await vector_store.insert_chunks(chunks, embeddings)
+        await vector_store.insert_chunks(chunks, embeddings, flush=False)
         total += len(batch)
+        pending_flush_count += len(batch)
+        if pending_flush_count >= flush_interval_chunks:
+            logger.info(
+                'Milvus flushing buffered vectors: pending=%d total=%d collection=%s',
+                pending_flush_count,
+                total,
+                target_collection_name,
+            )
+            await vector_store.flush(expected_min_entities=total)
+            await _wait_for_milvus_entity_count(host, port, target_collection_name, total, timeout_seconds=120)
+            pending_flush_count = 0
         logger.info('Milvus progress: %d/%d (%.1f vecs/s)',
                     total, len(docs), total / max(time.time() - t0, 0.001))
+
+    if total > skip:
+        logger.info('Milvus final flush: total=%d collection=%s', total, target_collection_name)
+        await vector_store.flush(expected_min_entities=total)
+        await _wait_for_milvus_entity_count(host, port, target_collection_name, total, timeout_seconds=180)
+
+    if reset and target_collection_name != MILVUS_COLLECTION_NAME:
+        logger.info(
+            "Milvus rebuild finished in temp collection %s, swapping into %s",
+            target_collection_name,
+            MILVUS_COLLECTION_NAME,
+        )
+        try:
+            Collection(target_collection_name).release()
+        except Exception:
+            pass
+        try:
+            connections.disconnect(alias="default")
+        except Exception:
+            pass
+        await asyncio.sleep(2.0)
+        connections.connect(host=host, port=port)
+        if utility.has_collection(MILVUS_COLLECTION_NAME):
+            logger.info("Dropping old Milvus collection before rename: %s", MILVUS_COLLECTION_NAME)
+            utility.drop_collection(MILVUS_COLLECTION_NAME)
+            await _wait_for_milvus_collection_absent(host, port, MILVUS_COLLECTION_NAME)
+        utility.rename_collection(target_collection_name, MILVUS_COLLECTION_NAME)
+        await _wait_for_milvus_collection_ready(host, port, MILVUS_COLLECTION_NAME)
+        logger.info("Milvus collection swap complete: %s", MILVUS_COLLECTION_NAME)
 
     logger.info('Milvus done: %d vectors in %.1fs', total, time.time() - t0)
     return total
