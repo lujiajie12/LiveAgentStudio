@@ -212,6 +212,50 @@ class VectorIndex:
 
 
 # ---------------------------------------------------------------------------
+# Local Reranker - BGE cross-encoder
+# ---------------------------------------------------------------------------
+
+class LocalReranker:
+    def __init__(self, model: str = "BAAI/bge-reranker-base", device: str = "mps"):
+        self.model_name = model
+        self.device = device
+        self.model = None
+
+    def _ensure_model(self):
+        if self.model is None:
+            try:
+                from sentence_transformers import CrossEncoder
+                self.model = CrossEncoder(self.model_name, device=self.device)
+                logger.info("Loaded local reranker model %s on device=%s", self.model_name, self.device)
+            except ImportError as exc:
+                raise ImportError(
+                    "Please install sentence-transformers: pip install sentence-transformers"
+                ) from exc
+            except Exception as exc:
+                raise RuntimeError(f"Failed to load reranker model: {exc}") from exc
+
+    async def rerank(self, inputs: List[Dict]) -> List[Dict]:
+        if not inputs:
+            return []
+        self._ensure_model()
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self._rerank_sync, inputs)
+
+    def _rerank_sync(self, inputs: List[Dict]) -> List[Dict]:
+        try:
+            query = inputs[0]['query']
+            documents = [item['document'] for item in inputs]
+            pairs = [[query, doc] for doc in documents]
+            scores = self.model.predict(pairs)
+            if isinstance(scores[0], (list, tuple)):
+                scores = [s[0] for s in scores]
+            return [{'score': float(s), 'confidence': float(s)} for s in scores]
+        except Exception as e:
+            logger.error('Local rerank error: %s', e)
+            return [{'score': 0.5, 'confidence': 0.5} for _ in inputs]
+
+
+# ---------------------------------------------------------------------------
 # DashScope Reranker - 阿里百炼 gte-rerank
 # ---------------------------------------------------------------------------
 

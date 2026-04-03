@@ -64,6 +64,11 @@ class AppSettings(BaseSettings):
     DASHSCOPE_API_KEY: Optional[str] = None
     SERPAPI_API_KEY: Optional[str] = None
 
+    # Reranker
+    RERANKER_MODEL: str = "/Volumes/App/LocalModel/BAAI/bge-reranker-v2-m3"
+    RERANKER_DEVICE: str = "mps"
+    USE_LOCAL_RERANKER: bool = True
+
     SSE_EVENT_DELAY_MS: int = 15
     CHAT_TOKEN_CHUNK_SIZE: int = 12
     MEMORY_WINDOW_SIZE: int = 5

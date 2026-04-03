@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.graph.runtime import GraphRuntime
 from app.infra.database import build_engine, build_session_factory, init_db
 from app.rag.hybrid_retrieval_pipeline import HybridRetrievalPipeline
-from app.rag.indexes import BM25Index, DashScopeReranker, MockReranker, VectorIndex
+from app.rag.indexes import BM25Index, DashScopeReranker, LocalReranker, MockReranker, VectorIndex
 from app.repositories.base import (
     AgentPreferenceRepository,
     HighFrequencyQuestionRepository,
@@ -125,10 +125,14 @@ def build_container() -> AppContainer:
     llm_gateway = OpenAILLMGateway()
     bm25_index = BM25Index(host=settings.ES_HOST, port=settings.ES_PORT)
     vector_index = VectorIndex(host=settings.MILVUS_HOST, port=settings.MILVUS_PORT)
+    # 优先使用本地 reranker，其次 DashScope，最后 Mock
     reranker = MockReranker()
-    dashscope_key = settings.DASHSCOPE_API_KEY or settings.LLM_API_KEY or ""
-    if dashscope_key:
-        reranker = DashScopeReranker(model="gte-rerank", api_key=dashscope_key)
+    if settings.USE_LOCAL_RERANKER:
+        reranker = LocalReranker(model=settings.RERANKER_MODEL, device=settings.RERANKER_DEVICE)
+    else:
+        dashscope_key = settings.DASHSCOPE_API_KEY or settings.LLM_API_KEY or ""
+        if dashscope_key:
+            reranker = DashScopeReranker(model="gte-rerank", api_key=dashscope_key)
 
     retrieval_pipeline = HybridRetrievalPipeline(
         llm_client=llm_gateway,
