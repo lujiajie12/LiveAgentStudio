@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import List, Tuple
 from langchain_core.documents import Document
 
+from app.rag.query_constraints import extract_catalog_attributes
+
 logger = logging.getLogger(__name__)
 
 HEAVY_METADATA_KEYS = {
@@ -23,6 +25,10 @@ HEAVY_METADATA_KEYS = {
 }
 MAX_METADATA_VALUE_BYTES = 4 * 1024
 MAX_METADATA_TOTAL_BYTES = 8 * 1024
+PRODUCT_TITLE_PATTERN = re.compile(
+    r"^\s*#+\s*(?P<name>[^()\n（]+?)\s*[（(](?P<sku>[^()（）\n]+)[)）]",
+    re.MULTILINE,
+)
 
 
 def _truncate_utf8(text: str, max_bytes: int) -> str:
@@ -130,6 +136,7 @@ class QMDMarkdownChunker:
         (re.compile(r'^\d+\. .+$',re.MULTILINE),   5),  # 有序列表项
         (re.compile(r'\n',                 re.MULTILINE),   1),  # 普通换行
     ]
+    HEADING_PATTERN = re.compile(r'^(#{1,6})\s+(.+)$', re.MULTILINE)
 
     def __init__(self, chunk_size: int = 900, window: int = 200, min_chunk_size: int = 100):
         self.chunk_size = chunk_size
@@ -145,27 +152,49 @@ class QMDMarkdownChunker:
     def _split_one(self, doc: Document) -> List[Document]:
         text = doc.page_content
         base_meta = sanitize_metadata(dict(doc.metadata))
-        source_file = base_meta.get('source_file', '')
-
-        # 扫描所有候选断点，记录 (position, base_score)
-        breakpoints = self._scan_breakpoints(text)
-
         chunks = []
-        pos = 0
         chunk_index = 0
+
+        # 先按当前文档里最高层级标题切成 section，避免整份商品资料总说明和具体商品正文落在同一个 chunk。
+        for section_title, section_text in self._split_semantic_sections(text):
+            section_chunks = self._split_section(section_text, base_meta, chunk_index, section_title)
+            chunks.extend(section_chunks)
+            chunk_index += len(section_chunks)
+
+        return chunks
+
+    def _split_section(
+        self,
+        text: str,
+        base_meta: dict,
+        start_index: int,
+        section_title: str,
+    ) -> List[Document]:
+        breakpoints = self._scan_breakpoints(text)
+        chunks: List[Document] = []
+        pos = 0
+        chunk_index = start_index
 
         while pos < len(text):
             target = pos + self.chunk_size
 
             if target >= len(text):
-                # 剩余部分直接作为最后一块
                 chunk_text = text[pos:]
                 if len(chunk_text.strip()) >= self.min_chunk_size:
-                    chunks.append(self._make_doc(chunk_text, base_meta, chunk_index, 'end'))
+                    subsection_title = self._extract_title(chunk_text)
+                    chunks.append(
+                        self._make_doc(
+                            chunk_text,
+                            base_meta,
+                            chunk_index,
+                            'end',
+                            section_title=section_title,
+                            subsection_title=subsection_title,
+                        )
+                    )
                     chunk_index += 1
                 break
 
-            # 在 [target-window, target] 窗口内找最优断点
             window_start = max(pos, target - self.window)
             best_pos, best_score, best_type = target, 0.0, 'forced'
 
@@ -177,7 +206,6 @@ class QMDMarkdownChunker:
                 if bp_pos > target:
                     break
                 distance = target - bp_pos
-                # QMD 核心公式：finalScore = baseScore × (1 - (distance/window)² × 0.7)
                 ratio = distance / self.window if self.window > 0 else 1.0
                 final_score = bp_score * (1.0 - (ratio ** 2) * 0.7)
                 if final_score > best_score:
@@ -187,14 +215,46 @@ class QMDMarkdownChunker:
 
             chunk_text = text[pos:best_pos]
             if len(chunk_text.strip()) >= self.min_chunk_size:
-                # 提取本块的标题（第一个标题行）
-                section_title = self._extract_title(chunk_text)
-                chunks.append(self._make_doc(chunk_text, base_meta, chunk_index, best_type, section_title))
+                subsection_title = self._extract_title(chunk_text)
+                chunks.append(
+                    self._make_doc(
+                        chunk_text,
+                        base_meta,
+                        chunk_index,
+                        best_type,
+                        section_title=section_title,
+                        subsection_title=subsection_title,
+                    )
+                )
                 chunk_index += 1
 
             pos = best_pos
 
         return chunks
+
+    def _split_semantic_sections(self, text: str) -> List[Tuple[str, str]]:
+        headings = list(self.HEADING_PATTERN.finditer(text))
+        if not headings:
+            return [('', text)]
+
+        primary_level = min(len(match.group(1)) for match in headings)
+        primary_headings = [match for match in headings if len(match.group(1)) == primary_level]
+        if not primary_headings:
+            return [('', text)]
+
+        sections: List[Tuple[str, str]] = []
+        preamble = text[:primary_headings[0].start()].strip()
+        if preamble:
+            sections.append((self._extract_title(preamble), preamble))
+
+        for index, match in enumerate(primary_headings):
+            start = match.start()
+            end = primary_headings[index + 1].start() if index + 1 < len(primary_headings) else len(text)
+            section_text = text[start:end].strip()
+            if section_text:
+                sections.append((match.group(0).strip(), section_text))
+
+        return sections or [('', text)]
 
     def _scan_breakpoints(self, text: str):
         """
@@ -218,14 +278,36 @@ class QMDMarkdownChunker:
                 return line
         return ''
 
-    def _make_doc(self, text: str, base_meta: dict, idx: int, cut_at: str, section_title: str = '') -> Document:
+    def _make_doc(
+        self,
+        text: str,
+        base_meta: dict,
+        idx: int,
+        cut_at: str,
+        section_title: str = '',
+        subsection_title: str = '',
+    ) -> Document:
         chunk_id = hashlib.md5(text.encode()).hexdigest()[:16]
+        title_source = section_title or subsection_title or text
+        title_match = PRODUCT_TITLE_PATTERN.search(title_source)
+        catalog_attributes = extract_catalog_attributes(text, base_meta)
         meta = {
             **base_meta,
             'chunk_id': chunk_id,
             'chunk_index': idx,
             'cut_at': cut_at,
             'section_title': section_title,
+            'subsection_title': subsection_title,
+            # 把商品名 / SKU 写回 chunk metadata，后面的 BM25、向量和混合排序都可以直接复用。
+            'product_name': title_match.group('name').strip() if title_match else '',
+            'sku': title_match.group('sku').strip() if title_match else '',
+            # 价带、类目、商品类型这些结构化信号会参与后续检索排序，不能只埋在正文里。
+            'category': catalog_attributes.get('category', ''),
+            'audience': catalog_attributes.get('audience', ''),
+            'product_type': catalog_attributes.get('product_type', ''),
+            'price_band_text': catalog_attributes.get('price_band_text', ''),
+            'price_band_low': catalog_attributes.get('price_band_low', ''),
+            'price_band_high': catalog_attributes.get('price_band_high', ''),
         }
         return Document(page_content=text, metadata=meta)
 

@@ -10,6 +10,7 @@ from app.agents.router import RouterAgent
 from app.agents.script_agent import ScriptAgent
 from app.core.config import settings
 from app.graph.runtime import GraphRuntime
+from app.skills.registry import SkillRegistry
 from app.memory.memory_policy import MemoryPolicy
 from app.memory.memory_service import LongTermMemoryService
 from app.memory.qa_agent_memory_hook import QAMemoryHook
@@ -138,11 +139,14 @@ def build_container() -> AppContainer:
     llm_gateway = OpenAILLMGateway()
     bm25_index = BM25Index(host=settings.ES_HOST, port=settings.ES_PORT)
     vector_index = VectorIndex(host=settings.MILVUS_HOST, port=settings.MILVUS_PORT)
-    # 优先使用本地 reranker，其次 DashScope，最后 Mock
+    # 优先使用本地 reranker（try-except 保护，失败时降级 DashScope），其次 DashScope，最后 Mock
     reranker = MockReranker()
     if settings.USE_LOCAL_RERANKER:
-        reranker = LocalReranker(model=settings.RERANKER_MODEL, device=settings.RERANKER_DEVICE)
-    else:
+        try:
+            reranker = LocalReranker(model=settings.RERANKER_MODEL, device=settings.RERANKER_DEVICE)
+        except Exception:
+            pass
+    if isinstance(reranker, MockReranker):
         dashscope_key = settings.DASHSCOPE_API_KEY or settings.LLM_API_KEY or ""
         if dashscope_key:
             reranker = DashScopeReranker(model="gte-rerank", api_key=dashscope_key)
@@ -152,7 +156,7 @@ def build_container() -> AppContainer:
         bm25_index=bm25_index,
         vector_index=vector_index,
         reranker_client=reranker,
-        n_expansions=2,
+        n_expansions=1,
     )
 
     router_agent = RouterAgent(llm_gateway)
@@ -186,6 +190,8 @@ def build_container() -> AppContainer:
         llm_client=ChatOpenAIJsonClient(label="analyst"),
     )
 
+    skill_registry = SkillRegistry.from_yaml(settings.SKILL_CONFIG_PATH)
+
     graph_runtime = GraphRuntime(
         router_agent=router_agent,
         guardrail_service=guardrail_service,
@@ -194,6 +200,7 @@ def build_container() -> AppContainer:
         direct_agent=direct_agent,
         script_agent=script_agent,
         analyst_agent=analyst_agent,
+        skill_registry=skill_registry,
     )
     chat_service = ChatService(
         graph_runtime=graph_runtime,

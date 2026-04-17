@@ -6,11 +6,13 @@ from app.memory.memory_service import MemoryRecord
 
 
 class StubPipeline:
-    def __init__(self, results=None, error: Exception | None = None):
+    def __init__(self, results=None, error: Exception | None = None, semantic_plan: dict | None = None):
         self.results = results or []
         self.error = error
+        self.semantic_plan = semantic_plan
         self.last_query = None
         self.last_source_hint = None
+        self.last_semantic_query = None
 
     async def retrieve(self, query: str, source_hint: str | None = None):
         self.last_query = query
@@ -18,6 +20,10 @@ class StubPipeline:
         if self.error:
             raise self.error
         return "context", self.results
+
+    async def normalize_query_semantics(self, query: str):
+        self.last_semantic_query = query
+        return self.semantic_plan or {"normalized_query": query, "budget_constraint": None}
 
 
 class StubResult:
@@ -44,6 +50,8 @@ class StubLLM:
 
     async def ainvoke_json(self, system_prompt: str, user_prompt: str):
         self.calls.append(("json", system_prompt, user_prompt))
+        if "knowledge focus planner" in system_prompt:
+            return {"focus_fields": ["general"], "reason": "stub_default"}
         if not self.json_responses:
             raise RuntimeError("no json response")
         response = self.json_responses.pop(0)
@@ -174,6 +182,43 @@ async def test_qa_agent_normalizes_rewritten_query_spacing():
 
 
 @pytest.mark.asyncio
+async def test_qa_agent_uses_llm_semantic_budget_normalization_for_colloquial_money_query():
+    pipeline = StubPipeline(
+        results=make_results(),
+        semantic_plan={
+            "normalized_query": "夏凉被80元左右的推荐有无",
+            "budget_constraint": {
+                "mode": "around",
+                "display": "80元左右",
+                "target": 80,
+                "min_price": 20,
+                "max_price": 140,
+            },
+        },
+    )
+    llm = StubLLM(
+        json_responses=[
+            {
+                "answer": "更接近80元左右预算的是蓝屿凉感夏被。",
+                "references": ["doc-1"],
+                "confidence": 0.86,
+            },
+        ]
+    )
+    agent = QAAgent(retrieval_pipeline=pipeline, llm_client=llm)
+
+    state = make_state("夏凉被80块钱左右的推荐有无")
+    state["short_term_memory"] = []
+
+    result = await agent.run(state)
+
+    assert pipeline.last_semantic_query == "夏凉被80块钱左右的推荐有无"
+    assert pipeline.last_query == "夏凉被80元左右的推荐有无"
+    assert result["rewritten_query"] == "夏凉被80元左右的推荐有无"
+    assert result["query_budget"]["display"] == "80元左右"
+
+
+@pytest.mark.asyncio
 async def test_qa_agent_uses_text_fallback_when_json_generation_fails():
     pipeline = StubPipeline(results=make_results())
     llm = StubLLM(
@@ -193,6 +238,93 @@ async def test_qa_agent_uses_text_fallback_when_json_generation_fails():
     assert result["references"] == ["doc-1", "doc-2", "doc-3"]
     assert result["qa_confidence"] == 0.68
     assert result["unresolved"] is False
+
+
+@pytest.mark.asyncio
+async def test_qa_agent_uses_extractive_fallback_when_llm_is_unavailable_after_retrieval():
+    pipeline = StubPipeline(results=make_results())
+    llm = StubLLM(
+        json_responses=[
+            {"rewritten_query": "What is the difference between Qinglan steam mop and a normal mop?"},
+            RuntimeError("llm unavailable"),
+        ],
+        text_responses=[RuntimeError("llm unavailable")],
+    )
+    agent = QAAgent(retrieval_pipeline=pipeline, llm_client=llm)
+
+    result = await agent.run(make_state("What is the difference from a normal mop?"))
+
+    # 检索已经命中时，即便 LLM 挂掉，也应该退化为“基于资料摘录”的可读回答，而不是直接无答案。
+    assert "Suitable for families with children or pets." in result["agent_output"]
+    assert result["references"] == ["doc-1", "doc-2", "doc-3"]
+    assert result["qa_confidence"] == 0.58
+    assert result["unresolved"] is False
+
+
+@pytest.mark.asyncio
+async def test_qa_agent_focus_fallback_returns_only_material_when_user_asks_material():
+    pipeline = StubPipeline(
+        results=[
+            StubResult(
+                "doc-1",
+                "# 蓝屿凉感夏被（蓝屿-0958）\n"
+                "> 类目：家纺日用 ｜ 直播价带：79元起 ｜ 适配人群：适合有孩子、养宠、重视清洁效率的家庭\n"
+                "- 商品名称：蓝屿凉感夏被\n"
+                "- 商品型号：蓝屿-0958\n"
+                "- 品牌：蓝屿\n"
+                "- 主要材质：亲肤针织面料、高弹记忆棉、硅胶防滑底座\n",
+                metadata={"source_file": "product_detail.md", "product_name": "蓝屿凉感夏被", "sku": "蓝屿-0958"},
+            ),
+            StubResult("doc-2", "- 功能亮点：轻量化机身，拿取更省力。", metadata={"source_file": "product_detail.md"}),
+        ]
+    )
+    llm = StubLLM(
+        json_responses=[
+            {"rewritten_query": "79元蓝屿凉感夏被，它的材质是什么做的？"},
+            {"focus_fields": ["material"], "reason": "asked_material"},
+            RuntimeError("llm unavailable"),
+        ],
+        text_responses=[RuntimeError("llm unavailable")],
+    )
+    agent = QAAgent(retrieval_pipeline=pipeline, llm_client=llm)
+
+    result = await agent.run(make_state("79元蓝屿凉感夏被，它的材质是什么做的？"))
+
+    assert "主要材质是 亲肤针织面料、高弹记忆棉、硅胶防滑底座" in result["agent_output"]
+    assert "商品型号" not in result["agent_output"]
+    assert "类目" not in result["agent_output"]
+
+
+@pytest.mark.asyncio
+async def test_qa_agent_focus_fallback_returns_only_model_when_user_asks_model():
+    pipeline = StubPipeline(
+        results=[
+            StubResult(
+                "doc-1",
+                "# 蓝屿凉感夏被（蓝屿-0958）\n"
+                "- 商品名称：蓝屿凉感夏被\n"
+                "- 商品型号：蓝屿-0958\n"
+                "- 品牌：蓝屿\n"
+                "- 主要材质：亲肤针织面料、高弹记忆棉、硅胶防滑底座\n",
+                metadata={"source_file": "product_detail.md", "product_name": "蓝屿凉感夏被", "sku": "蓝屿-0958"},
+            ),
+        ]
+    )
+    llm = StubLLM(
+        json_responses=[
+            {"rewritten_query": "79元蓝屿凉感夏被，他的商品型号是？"},
+            {"focus_fields": ["model"], "reason": "asked_model"},
+            RuntimeError("llm unavailable"),
+        ],
+        text_responses=[RuntimeError("llm unavailable")],
+    )
+    agent = QAAgent(retrieval_pipeline=pipeline, llm_client=llm)
+
+    result = await agent.run(make_state("79元蓝屿凉感夏被，他的商品型号是？"))
+
+    assert "商品型号是 蓝屿-0958" in result["agent_output"]
+    assert "主要材质" not in result["agent_output"]
+    assert "品牌" not in result["agent_output"]
 
 
 @pytest.mark.asyncio
@@ -277,8 +409,7 @@ async def test_qa_agent_uses_google_search_tool_without_retrieval(monkeypatch):
     assert result["unresolved"] is False
     assert result["tools_used"] == ["google_search"]
     assert "google_search" in result["tool_outputs"]
-    assert len(llm.calls) == 1
-    assert llm.calls[0][0] == "json"
+    assert llm.calls == []
 
 
 @pytest.mark.asyncio

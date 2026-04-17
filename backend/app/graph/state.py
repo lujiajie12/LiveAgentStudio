@@ -46,6 +46,7 @@ class LiveAgentState(TypedDict):
     long_term_memories: NotRequired[list[dict[str, Any]]]
     long_term_memory_hits: NotRequired[int]
     rewritten_query: NotRequired[str]
+    query_budget: NotRequired[dict[str, Any] | None]
     qa_confidence: NotRequired[float]
     unresolved: NotRequired[bool]
     tools_used: NotRequired[list[str]]
@@ -54,6 +55,9 @@ class LiveAgentState(TypedDict):
     script_tone: NotRequired[str]
     script_reason: NotRequired[str]
     script_candidates: NotRequired[list[str]]
+    should_persist_report: NotRequired[bool]
+    output_render_mode: NotRequired[str]
+    needs_contextual_rewrite: NotRequired[bool]
     analyst_report: NotRequired[dict[str, Any]]
     report_id: NotRequired[str]
 

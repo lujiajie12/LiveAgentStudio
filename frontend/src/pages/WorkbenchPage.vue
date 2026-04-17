@@ -90,15 +90,30 @@
           </div>
         </section>
 
-        <footer class="studio-v2__operator">
-          <div class="studio-v2__operator-avatar">OP</div>
-          <div class="studio-v2__operator-meta">
+        <footer class="studio-v2__operator" @click.stop>
+          <div class="studio-v2__operator-avatar" @click="toggleOperatorMenu">OP</div>
+          <div class="studio-v2__operator-meta" @click="toggleOperatorMenu">
             <strong>{{ operatorName }}</strong>
             <p>主控台权限</p>
           </div>
           <button type="button" class="studio-v2__operator-link" title="Studio 设置暂未开放" disabled>
             <AppIcon name="settings" :size="16" />
           </button>
+          <!-- 退出登录下拉菜单 -->
+          <div v-if="showOperatorMenu" class="studio-v2__operator-dropdown">
+            <div class="studio-v2__operator-dropdown-user">
+              <div class="studio-v2__operator-dropdown-avatar">OP</div>
+              <div>
+                <strong>{{ operatorName }}</strong>
+                <p>主控台权限</p>
+              </div>
+            </div>
+            <div class="studio-v2__operator-dropdown-divider"></div>
+            <button type="button" class="studio-v2__operator-dropdown-item" @click="handleLogout">
+              <AppIcon name="log-out" :size="14" />
+              退出登录
+            </button>
+          </div>
         </footer>
       </aside>
 
@@ -221,12 +236,52 @@
                 <span class="studio-v2__action-badge" :class="qaBadgeClass()">{{ qaBadgeLabel(card) }}</span>
               </header>
 
+              <!-- AI 输出结果区域 -->
               <div class="studio-v2__action-body">
                 <label>AI 当前输出结果</label>
-                <p v-if="workspace.isStreaming && workspace.streamingKey === 'qa'" class="studio-v2__action-streaming-note">
-                  AI 正在流式生成中，结果会逐字追加到当前草稿。
-                </p>
-                <textarea :value="resolveDraft(card)" @input="updateDraft(card.key, $event.target.value)"></textarea>
+
+                <!-- 思考中状态 -->
+                <div v-if="workspace.awaitingFirstToken && workspace.streamingKey === 'qa'" class="studio-v2__ai-thinking">
+                  <div class="studio-v2__ai-thinking-avatar">
+                    <AppIcon name="bot" :size="24" />
+                  </div>
+                  <div class="studio-v2__ai-thinking-content">
+                    <div class="studio-v2__ai-thinking-dots">
+                      <span></span><span></span><span></span>
+                    </div>
+                    <p class="studio-v2__ai-thinking-text">
+                      {{ workspace.slowRequest ? '响应较慢，AI 仍在思考中...' : 'AI 正在思考，请稍候...' }}
+                    </p>
+                    <p class="studio-v2__ai-thinking-hint">首次响应可能需要 5-10 秒，请耐心等待</p>
+                  </div>
+                </div>
+
+                <!-- 流式输出状态 -->
+                <div v-else-if="workspace.isStreaming && workspace.streamingKey === 'qa'" class="studio-v2__ai-streaming">
+                  <div class="studio-v2__ai-streaming-header">
+                    <div class="studio-v2__ai-avatar">
+                      <AppIcon name="bot" :size="16" />
+                    </div>
+                    <span class="studio-v2__ai-streaming-label">AI 正在生成回答</span>
+                  </div>
+                  <div class="studio-v2__ai-streaming-content">
+                    <p class="studio-v2__ai-streaming-text">
+                      {{ resolveDraft(card) }}<span class="studio-v2__ai-cursor"></span>
+                    </p>
+                  </div>
+                </div>
+
+                <!-- 最终结果/空闲状态 -->
+                <div v-else class="studio-v2__ai-result">
+                  <textarea
+                    v-if="card.editable"
+                    :value="resolveDraft(card)"
+                    @input="updateDraft(card.key, $event.target.value)"
+                  ></textarea>
+                  <div v-else class="studio-v2__ai-result-text">
+                    <p>{{ resolveDraft(card) || '左侧高优问题交给 AI 生成后，这里会显示结合知识库与大模型生成的结果。' }}</p>
+                  </div>
+                </div>
               </div>
 
               <footer class="studio-v2__action-footer">
@@ -462,10 +517,12 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 
 import AppIcon from '@/components/AppIcon.vue'
 import RecentQAHistory from '@/components/RecentQAHistory.vue'
+import { useStudioAuthStore } from '@/stores/studioAuth'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { readStudioUser } from '@/utils/studioAuth'
 
 const workspace = useWorkspaceStore()
+const studioAuth = useStudioAuthStore()
 const commandInput = ref('')
 const commandInputRef = ref(null)
 const rawListRef = ref(null)
@@ -473,6 +530,7 @@ const previousOverview = ref(null)
 const dismissedQaHistoryIds = ref([])
 const editorDrafts = reactive({})
 const selectedPlans = reactive({ ops: 'A' })
+const showOperatorMenu = ref(false)
 
 const operatorName = computed(() => {
   const studioUser = readStudioUser()
@@ -518,12 +576,13 @@ const qaTimeline = computed(() => {
   const items = [...workspace.activeQaHistory]
 
   if (workspace.isStreaming && workspace.streamingKey === 'qa') {
-    const latestUser = [...workspace.activeMessages].reverse().find((item) => item.role === 'user')
+    // 流式期间 activeRequestText 保留当前问题，不依赖已清空的 activeMessages
+    const currentQuestion = workspace.activeRequestText || ''
     const currentAnswer = workspace.actionCenter.qa?.content || ''
-    if (latestUser && currentAnswer) {
+    if (currentQuestion && currentAnswer) {
       items.push({
-        id: `streaming-${latestUser.id}`,
-        question: latestUser.content,
+        id: `streaming-${Date.now()}`,
+        question: currentQuestion,
         answer: currentAnswer,
         references: workspace.actionCenter.qa?.references || [],
         type: workspace.actionCenter.qa?.metadata?.response_kind === 'direct' ? 'Direct' : 'RAG',
@@ -757,6 +816,16 @@ function openTeleprompterPreview() {
   workspace.openTeleprompterPreview()
 }
 
+function toggleOperatorMenu() {
+  showOperatorMenu.value = !showOperatorMenu.value
+}
+
+async function handleLogout() {
+  showOperatorMenu.value = false
+  await studioAuth.logout()
+  window.location.href = '/studio-login'
+}
+
 watch(
   () => workspace.rawBarrages.length,
   async () => {
@@ -780,6 +849,15 @@ watch(
 )
 
 watch(
+  () => [workspace.streamingKey, workspace.isStreaming, workspace.awaitingFirstToken],
+  ([streamingKey, isStreaming, awaitingFirstToken]) => {
+    if (streamingKey === 'qa' && (isStreaming || awaitingFirstToken)) {
+      editorDrafts.qa = undefined
+    }
+  }
+)
+
+watch(
   () => [workspace.actionCenter.qa?.content, workspace.actionCenter.guardrail?.content, workspace.actionCenter.ops?.content],
   () => {
     editorDrafts.qa = undefined
@@ -790,9 +868,255 @@ watch(
 
 onMounted(async () => {
   await workspace.bootstrap()
+  document.addEventListener('click', closeOperatorMenu)
 })
 
 onBeforeUnmount(() => {
   workspace.teardown()
+  document.removeEventListener('click', closeOperatorMenu)
 })
+
+function closeOperatorMenu() {
+  showOperatorMenu.value = false
+}
 </script>
+
+<style scoped>
+.studio-v2__ai-thinking {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px 20px;
+  background: rgba(16, 185, 129, 0.06);
+  border: 1px solid rgba(16, 185, 129, 0.18);
+  border-radius: 16px 16px 4px 16px;
+  min-height: 80px;
+}
+
+.studio-v2__ai-thinking-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.studio-v2__ai-thinking-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.studio-v2__ai-thinking-dots {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.studio-v2__ai-thinking-dots span {
+  width: 7px;
+  height: 7px;
+  background: #10b981;
+  border-radius: 50%;
+  animation: studio-v2__bounce 1.4s ease-in-out infinite;
+}
+
+.studio-v2__ai-thinking-dots span:nth-child(1) { animation-delay: 0s; }
+.studio-v2__ai-thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+.studio-v2__ai-thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes studio-v2__bounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+.studio-v2__ai-thinking-text {
+  margin: 0;
+  color: #10b981;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.studio-v2__ai-thinking-hint {
+  margin: 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.studio-v2__ai-streaming {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 20px;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.28);
+  border-radius: 16px 16px 4px 16px;
+  min-height: 60px;
+}
+
+.studio-v2__ai-streaming-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.studio-v2__ai-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.studio-v2__ai-streaming-label {
+  color: #10b981;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.studio-v2__ai-streaming-content {
+  padding-left: 34px;
+}
+
+.studio-v2__ai-streaming-text {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.studio-v2__ai-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 16px;
+  background: #10b981;
+  margin-left: 2px;
+  vertical-align: middle;
+  animation: studio-v2__blink 0.8s ease-in-out infinite;
+}
+
+@keyframes studio-v2__blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+.studio-v2__ai-result {
+  min-height: 80px;
+}
+
+.studio-v2__ai-result-text {
+  padding: 12px 16px;
+  background: rgba(30, 41, 59, 0.4);
+  border-radius: 12px;
+}
+
+.studio-v2__ai-result-text p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.studio-v2__action-badge--streaming {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.studio-v2__action-badge--slow {
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.studio-v2__action-badge--pending {
+  color: #a5b4fc;
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+/* Operator 下拉菜单 */
+.studio-v2__operator {
+  position: relative;
+}
+
+.studio-v2__operator-dropdown {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 16px;
+  right: 16px;
+  background: rgba(22, 26, 35, 0.98);
+  border: 1px solid rgba(51, 65, 85, 0.72);
+  border-radius: 12px;
+  overflow: hidden;
+  z-index: 100;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.studio-v2__operator-dropdown-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
+.studio-v2__operator-dropdown-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.studio-v2__operator-dropdown-user strong {
+  display: block;
+  color: #f8fafc;
+  font-size: 14px;
+  margin-bottom: 2px;
+}
+
+.studio-v2__operator-dropdown-user p {
+  margin: 0;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.studio-v2__operator-dropdown-divider {
+  height: 1px;
+  background: rgba(51, 65, 85, 0.56);
+}
+
+.studio-v2__operator-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  background: transparent;
+  color: #fca5a5;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  text-align: left;
+}
+
+.studio-v2__operator-dropdown-item:hover {
+  background: rgba(239, 68, 68, 0.12);
+}
+</style>

@@ -19,9 +19,10 @@ class ScriptAgent(BaseAgent):
         self.llm_client = llm_client or ChatOpenAIJsonClient()
 
     # 执行完整话术生成链路：识别场景、拉取素材、约束动态事实并生成可口播话术。
+    # script_type 和 script_tone 由 Router LLM 预决策，直接从 state 读取。
     async def run(self, state: LiveAgentState) -> StatePatch:
-        script_type = self._infer_script_type(state)
-        script_tone = self._infer_tone(state, script_type)
+        script_type = str(state.get("script_type") or "product_pitch").strip()
+        script_tone = str(state.get("script_tone") or "friendly").strip()
         source_hint = self._resolve_source_hint(script_type, state)
         query = self._build_material_query(state, script_type)
         retrieved_docs = await self._retrieve_docs(query, source_hint)
@@ -112,8 +113,15 @@ class ScriptAgent(BaseAgent):
     async def _retrieve_docs(self, query: str, source_hint: str) -> list[dict[str, Any]]:
         if self.pipeline is None:
             return []
+        normalized_query = query
+        if hasattr(self.pipeline, "normalize_query_semantics"):
+            try:
+                semantic_plan = await self.pipeline.normalize_query_semantics(query)
+                normalized_query = str((semantic_plan or {}).get("normalized_query") or query).strip() or query
+            except Exception:
+                normalized_query = query
         try:
-            _, rerank_results = await self.pipeline.retrieve(query, source_hint=source_hint)
+            _, rerank_results = await self.pipeline.retrieve(normalized_query, source_hint=source_hint)
         except Exception:
             return []
 

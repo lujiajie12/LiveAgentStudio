@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 
-import { login } from '@/api/auth'
+import { login, logout } from '@/api/auth'
 import { fetchStudioCurrentUser } from '@/api/studio'
 import {
   clearStudioToken,
@@ -39,7 +39,12 @@ export const useStudioAuthStore = defineStore('studioAuth', {
         this.loading = false
       }
     },
-    logout() {
+    async logout() {
+      try {
+        await logout()
+      } catch (_) {
+        // 即使后端调用失败也清除本地状态
+      }
       clearStudioToken()
       clearStudioUser()
       this.token = ''

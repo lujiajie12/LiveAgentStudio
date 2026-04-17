@@ -81,7 +81,7 @@ class OpenAILLMGateway(LLMGateway):
         self._tool_client = None
         api_key  = settings.LLM_API_KEY or settings.OPENAI_API_KEY
         base_url = settings.LLM_BASE_URL or settings.OPENAI_BASE_URL
-        model    = settings.LLM_MODEL or settings.ROUTER_MODEL
+        model = settings.ROUTER_MODEL or settings.LLM_MODEL
         self._planner_model = settings.PLANNER_MODEL or settings.LLM_MODEL or settings.ROUTER_MODEL
 
         if api_key and ChatOpenAI is not None:
@@ -90,7 +90,7 @@ class OpenAILLMGateway(LLMGateway):
                 api_key=api_key,
                 base_url=base_url,
                 timeout=settings.ROUTER_TIMEOUT_MS / 1000,
-                temperature=0,
+                temperature=0.8,
             )
         if api_key and AsyncOpenAI is not None:
             self._tool_client = AsyncOpenAI(
@@ -449,3 +449,50 @@ class OpenAILLMGateway(LLMGateway):
             "reason": "heuristic_fallback",
             "knowledge_scope": self._infer_knowledge_scope(lowered),
         }
+    
+
+    async def ainvoke_text(self, system_prompt: str, user_prompt: str) -> str:
+        if self._client is None:
+            raise RuntimeError("text client unavailable")
+
+        started = perf_counter()
+        try:
+            response = await self._client.ainvoke(
+                [
+                    ("system", system_prompt),
+                    ("human", user_prompt),
+                ]
+            )
+        except Exception as exc:
+            if self._is_timeout_error(exc):
+                await record_timed_tool_call(
+                    "direct_llm_text",
+                    started_at=started,
+                    node_name="direct",
+                    category="llm",
+                    output_summary="timeout",
+                    status="degraded",
+                )
+                raise TimeoutError("direct text request timed out") from exc
+
+            await record_timed_tool_call(
+                "direct_llm_text",
+                started_at=started,
+                node_name="direct",
+                category="llm",
+                output_summary=str(exc),
+                status="degraded",
+            )
+            raise
+
+        content = str(response.content or "").strip()
+
+        await record_timed_tool_call(
+            "direct_llm_text",
+            started_at=started,
+            node_name="direct",
+            category="llm",
+            output_summary=content[:200],
+            status="ok",
+        )
+        return content

@@ -69,8 +69,9 @@ class AppSettings(BaseSettings):
     LLM_MODEL: Optional[str] = None
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_BASE_URL: Optional[str] = None
-    ROUTER_MODEL: str = "qwen-plus"
+    ROUTER_MODEL: str = "qwen-turbo"
     ROUTER_TIMEOUT_MS: int = 5000
+    QA_MODEL: str = "qwen-plus"
     PLANNER_MODEL: Optional[str] = None
     PLANNER_TIMEOUT_MS: int = 6000
     PLANNER_MAX_STEPS: int = 4
@@ -100,6 +101,11 @@ class AppSettings(BaseSettings):
 
     # RAG / Embedding / Milvus
     EMBEDDING_MODEL: str = "BAAI/bge-large-zh-v1.5"
+    # 可选：显式指定本地模型目录；未配置时回退到 EMBEDDING_MODEL。
+    EMBEDDING_MODEL_PATH: Optional[str] = None
+    # 线上查询阶段默认只从本地缓存/本地目录加载，避免每次检索都探测外网。
+    EMBEDDING_LOCAL_FILES_ONLY: bool = True
+    EMBEDDING_CACHE_DIR: Optional[str] = None
     EMBEDDING_DIM: int = 1024
     EMBEDDING_DEVICE: str = "cuda"
     EMBEDDING_BATCH_SIZE: int = 64
@@ -107,10 +113,13 @@ class AppSettings(BaseSettings):
     MILVUS_RESET_SETTLE_SECONDS: int = 15
     DASHSCOPE_API_KEY: Optional[str] = None
 
+    # Skill 前置拦截
+    SKILL_CONFIG_PATH: str = "app/skills/skills.yaml"
+
     # Reranker
     RERANKER_MODEL: str = "/Volumes/App/LocalModel/BAAI/bge-reranker-v2-m3"
     RERANKER_DEVICE: str = "mps"
-    USE_LOCAL_RERANKER: bool = True
+    USE_LOCAL_RERANKER: bool = False
 
     # 流式输出与观测
     SSE_EVENT_DELAY_MS: int = 25
