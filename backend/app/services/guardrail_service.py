@@ -19,12 +19,14 @@ class GuardrailResult(BaseModel):
 
 
 class GuardrailService:
-    # 初始化治理服务，注入敏感词和软改写规则。
+    # GuardrailService 是主链的统一治理出口：
+    # 不管前面是 planner、qa、script 还是 analyst 产出的内容，最终都会在这里做权限、
+    # 敏感词、夸大宣传、长度、引用合法性等检查。
     def __init__(self, sensitive_terms: list[str]):
         self.sensitive_terms = sensitive_terms
         self.soft_replace_rules: list[tuple[str, str]] = [
             (r"最强", "更强"),
-            (r"全网最低", "很有竞争力"),
+            (r"全网最佳", "很有竞争力"),
             (r"第一", "表现突出"),
             (r"唯一", "较少见"),
             (r"国家级", "权威级"),
@@ -33,13 +35,14 @@ class GuardrailService:
             (r"绝对", "更"),
         ]
 
-    # 统一治理入口，同时兼容纯文本模式和完整状态模式。
+    # 统一治理入口。
+    # 为了兼容旧调用方，这里既支持只传一段纯文本，也支持传完整 state。
     async def evaluate(self, payload: str | dict[str, Any]) -> GuardrailResult:
         if isinstance(payload, str):
             return self._evaluate_text(payload)
         return self._evaluate_state(payload)
 
-    # 纯文本模式下只做敏感词硬拦截，兼容旧调用方。
+    # 纯文本模式是兼容分支，只做最基础的敏感词硬拦截。
     def _evaluate_text(self, text: str) -> GuardrailResult:
         violations = [term for term in self.sensitive_terms if term and term in text]
         if violations:
@@ -52,7 +55,8 @@ class GuardrailService:
             )
         return GuardrailResult(passed=True, final_output=text)
 
-    # 完整状态模式下执行权限、夸大宣传、长度和引用合法性治理。
+    # 完整 state 模式才是主链正式使用的治理逻辑。
+    # 这里会同时处理权限、夸大宣传、敏感词、长度限制和引用校验。
     def _evaluate_state(self, state: dict[str, Any]) -> GuardrailResult:
         text = str(state.get("agent_output", "") or "")
         intent = str(state.get("intent", "") or "")
@@ -64,6 +68,7 @@ class GuardrailService:
         reasons: list[str] = []
         action = "pass"
 
+        # analyst 输出涉及权限控制，非运营/管理员不允许直接查看复盘分析。
         if intent == "analyst" and user_role not in {"operator", "admin"}:
             return GuardrailResult(
                 passed=False,
@@ -75,6 +80,8 @@ class GuardrailService:
             )
 
         modified_text = text
+        # 对夸张宣传做软改写，而不是直接报错。
+        # 这样既能保住回答连续性，又能把风险表达压下去。
         for pattern, replacement in self.soft_replace_rules:
             if re.search(pattern, modified_text):
                 violations.append(pattern)
@@ -83,6 +90,7 @@ class GuardrailService:
             reasons.append("exaggerated_claims")
             action = "soft_block"
 
+        # 敏感词属于硬风险，发现后直接拦截。
         hard_violations = [term for term in active_sensitive_terms if term and term in modified_text]
         if hard_violations:
             return GuardrailResult(
@@ -94,12 +102,15 @@ class GuardrailService:
                 references=[],
             )
 
+        # 不同类型内容允许的最大长度不同：
+        # QA 更短，脚本中等，分析报告可以更长一些。
         max_length = 500 if intent == "qa" else 300 if intent == "script" else 1200
         if len(modified_text) > max_length:
             modified_text = modified_text[: max_length - 3].rstrip() + "..."
             reasons.append("length_truncated")
             action = "soft_block" if action == "pass" else action
 
+        # 引用必须来自真实召回文档，不能把不存在的 doc_id 带到前端。
         normalized_references = self._validate_references(
             references=state.get("references", []),
             retrieved_docs=state.get("retrieved_docs", []),
@@ -117,7 +128,7 @@ class GuardrailService:
             action=action,
         )
 
-    # 只保留真实召回文档里的引用，避免前端看到伪造 doc_id。
+    # 只保留真实召回文档里的 doc_id，避免前端看到伪造引用。
     def _validate_references(
         self,
         references: list[Any],

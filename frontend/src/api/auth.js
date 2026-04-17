@@ -9,3 +9,7 @@ export async function fetchCurrentUser() {
   const response = await http.get('/me')
   return response.data.data
 }
+
+export async function logout() {
+  await http.post('/auth/logout')
+}

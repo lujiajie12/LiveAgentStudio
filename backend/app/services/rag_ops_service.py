@@ -9,6 +9,7 @@ from time import perf_counter
 from typing import Any
 
 from app.core.config import settings
+from app.rag.query_constraints import extract_query_budget
 from app.repositories.base import RagOfflineJobRepository
 from app.schemas.domain import RagOfflineJobRecord
 
@@ -68,7 +69,12 @@ class RagOpsService:
         retrieve_ms = int((perf_counter() - retrieve_started) * 1000)
 
         fusion_started = perf_counter()
-        fused_results = await self.retrieval_pipeline._rrf_fusion(all_results, effective_source_hint)
+        # 调试链路要和线上检索主链保持同一份融合契约，避免“主链正常、调试页 500”这种假故障。
+        fused_results = await self.retrieval_pipeline._rrf_fusion(
+            rewritten_query,
+            all_results,
+            effective_source_hint,
+        )
         fusion_ms = int((perf_counter() - fusion_started) * 1000)
 
         rerank_started = perf_counter()
@@ -81,6 +87,7 @@ class RagOpsService:
         return {
             "query": query,
             "rewritten_query": rewritten_query,
+            "query_budget": extract_query_budget(rewritten_query),
             "source_hint": effective_source_hint,
             "expanded_queries": expanded_queries,
             "bm25_results": [

@@ -58,7 +58,9 @@ class AnalystAgent(BaseAgent):
 
         report = await self._build_report(state, history_messages, session)
         report_id = None
-        if self._should_persist_report(state, session):
+        # should_persist_report 由 Router LLM 预决策，直接从 state 读取
+        should_persist = state.get("should_persist_report", False)
+        if should_persist:
             saved = await self.report_repository.create(
                 ReportRecord(
                     session_id=state["session_id"],
@@ -75,8 +77,10 @@ class AnalystAgent(BaseAgent):
             report_id = saved.id
         await self._persist_high_frequency_questions(state, report["top_questions"])
 
+        # output_render_mode 由 Router LLM 预决策
+        output_render_mode = str(state.get("output_render_mode") or "full").strip()
         return {
-            "agent_output": self._render_output(state["user_input"], report),
+            "agent_output": self._render_output_by_mode(output_render_mode, report),
             "references": [],
             "retrieved_docs": [],
             "analyst_report": report,
@@ -299,12 +303,15 @@ class AnalystAgent(BaseAgent):
         return getattr(session, "status", None) == SessionStatus.ended if session is not None else False
 
     # 把结构化复盘结果渲染成更适合前端展示的文本输出。
-    def _render_output(self, user_input: str, report: dict[str, Any]) -> str:
-        lowered = user_input.lower()
-        if any(token in lowered for token in ("高频", "问最多", "top问题")) and report["top_questions"]:
+    # output_render_mode 由 Router LLM 预决策，不再用关键词判断。
+    def _render_output_by_mode(self, mode: str, report: dict[str, Any]) -> str:
+        if mode == "high_frequency_questions" and report.get("top_questions"):
             return "本场高频问题主要有：" + "；".join(report["top_questions"][:3])
-        if any(token in lowered for token in ("未解决", "unresolved")) and report["unresolved_questions"]:
+        if mode == "unresolved_only" and report.get("unresolved_questions"):
             return "当前 unresolved 问题有：" + "；".join(report["unresolved_questions"][:3])
+        if mode == "summary_only":
+            return report.get("summary", "暂无摘要")
+        # default: full render
         return (
             f"{report['summary']}\n"
             f"消息总量：{report['total_messages']}\n"

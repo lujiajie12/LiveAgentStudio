@@ -95,43 +95,6 @@ services:
       timeout: 10s
       retries: 5
 
-  backend:
-    build:
-      context: ../backend
-      dockerfile: Dockerfile
-      args:
-        PYTHON_BASE_IMAGE: ${BACKEND_BASE_IMAGE:-python:3.11-slim}
-    env_file:
-      - ../backend/.env
-    ports:
-      - "${BACKEND_PORT:-8000}:8000"
-    environment:
-      DATABASE_URL: postgresql://${DB_USER:-root}:${DB_PASSWORD:-change_me}@postgres:5432/${DB_NAME:-liveagent}
-      REDIS_URL: redis://redis:6379/0
-      MILVUS_HOST: milvus
-      MILVUS_PORT: 19530
-      ES_HOST: elasticsearch
-      ES_PORT: 9200
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes:
-      - ../backend:/app
-
-  frontend:
-    build:
-      context: ../frontend
-      dockerfile: Dockerfile
-      args:
-        NODE_BASE_IMAGE: ${FRONTEND_NODE_BASE_IMAGE:-node:18-alpine}
-        NGINX_BASE_IMAGE: ${FRONTEND_NGINX_BASE_IMAGE:-nginx:alpine}
-    ports:
-      - "${FRONTEND_PORT:-5173}:80"
-    depends_on:
-      - backend
-
 volumes:
   postgres_data:
   etcd_data:

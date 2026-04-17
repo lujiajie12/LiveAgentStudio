@@ -19,6 +19,7 @@ import argparse
 import logging
 import time
 import asyncio
+import re
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BACKEND_DIR)
 
 from dotenv import load_dotenv
+from app.rag.query_constraints import extract_catalog_attributes
 for _p in [
     # 索引脚本只读取 backend/.env，与应用主配置保持一致。
     os.path.normpath(os.path.join(BACKEND_DIR, '.env')),
@@ -155,6 +157,67 @@ def _build_rebuild_collection_name() -> str:
     return f"{MILVUS_REBUILD_PREFIX}{int(time.time())}"
 
 
+PRODUCT_TITLE_PATTERN = re.compile(
+    r"^\s*#+\s*(?P<name>[^()\n（]+?)\s*[（(](?P<sku>[^()（）\n]+)[)）]",
+    re.MULTILINE,
+)
+
+
+def _extract_search_fields(doc) -> dict:
+    metadata = dict(getattr(doc, "metadata", {}) or {})
+    text = str(getattr(doc, "page_content", "") or "")[:4000]
+    section_title = str(metadata.get("section_title", "") or "").strip()
+    subsection_title = str(metadata.get("subsection_title", "") or "").strip()
+    source_file = str(metadata.get("source_file", "") or "").strip()
+
+    # 商品详情 markdown 会把标题写成“# 商品名（SKU）”，这里在建索引阶段抽出来做结构化字段，
+    # 这样商品名、SKU、标题命中时可以单独加权，而不是和长正文完全混在一起。
+    title_source = section_title or subsection_title or text
+    title_match = PRODUCT_TITLE_PATTERN.search(title_source)
+    product_name = str(metadata.get("product_name", "") or "").strip() or (
+        title_match.group("name").strip() if title_match else ""
+    )
+    sku = str(metadata.get("sku", "") or "").strip() or (
+        title_match.group("sku").strip() if title_match else ""
+    )
+    catalog_attributes = extract_catalog_attributes(text, metadata)
+
+    # search_text 是给 BM25 的聚合检索字段，专门把标题、商品名、SKU 和正文拼起来。
+    search_text = " ".join(
+        part
+        for part in [
+            section_title,
+            subsection_title,
+            product_name,
+            sku,
+            catalog_attributes.get("category", ""),
+            catalog_attributes.get("product_type", ""),
+            catalog_attributes.get("price_band_text", ""),
+            source_file,
+            text,
+        ]
+        if str(part).strip()
+    )
+
+    return {
+        "text": text,
+        "chunk_id": str(metadata.get("chunk_id", "") or ""),
+        "source_file": source_file,
+        "section_title": section_title,
+        "subsection_title": subsection_title,
+        "product_name": product_name,
+        "sku": sku,
+        "category": str(catalog_attributes.get("category", "") or ""),
+        "audience": str(catalog_attributes.get("audience", "") or ""),
+        "product_type": str(catalog_attributes.get("product_type", "") or ""),
+        "price_band_text": str(catalog_attributes.get("price_band_text", "") or ""),
+        "price_band_low": catalog_attributes.get("price_band_low"),
+        "price_band_high": catalog_attributes.get("price_band_high"),
+        "search_text": search_text,
+        "metadata": {k: str(v) for k, v in metadata.items()},
+    }
+
+
 # ---------------------------------------------------------------------------
 # BM25 索引 - ES 原生 bulk API
 # ---------------------------------------------------------------------------
@@ -177,11 +240,92 @@ def index_elasticsearch(docs, host='localhost', port=9200, reset=False):
     if not es.indices.exists(index=index_name):
         es.indices.create(
             index=index_name,
-            settings={'number_of_shards': 1, 'number_of_replicas': 0},
+            settings={
+                'number_of_shards': 1,
+                'number_of_replicas': 0,
+                'analysis': {
+                    'normalizer': {
+                        'lowercase_normalizer': {
+                            'type': 'custom',
+                            'filter': ['lowercase', 'asciifolding'],
+                        }
+                    },
+                    'analyzer': {
+                        # 不依赖第三方 IK 插件，直接用 ES 内置 cjk_bigram 做中文商品名/自然问句召回。
+                        'zh_cjk_analyzer': {
+                            'tokenizer': 'standard',
+                            'filter': ['cjk_width', 'lowercase', 'cjk_bigram'],
+                        }
+                    },
+                },
+            },
             mappings={'properties': {
-                'text':        {'type': 'text'},
-                'chunk_id':    {'type': 'keyword'},
+                'text': {
+                    'type': 'text',
+                    'analyzer': 'zh_cjk_analyzer',
+                    'search_analyzer': 'zh_cjk_analyzer',
+                    'fields': {
+                        'std': {'type': 'text', 'analyzer': 'standard'},
+                    },
+                },
+                'search_text': {
+                    'type': 'text',
+                    'analyzer': 'zh_cjk_analyzer',
+                    'search_analyzer': 'zh_cjk_analyzer',
+                },
+                'section_title': {
+                    'type': 'text',
+                    'analyzer': 'zh_cjk_analyzer',
+                    'search_analyzer': 'zh_cjk_analyzer',
+                    'fields': {
+                        'keyword': {'type': 'keyword', 'ignore_above': 512},
+                    },
+                },
+                'subsection_title': {
+                    'type': 'text',
+                    'analyzer': 'zh_cjk_analyzer',
+                    'search_analyzer': 'zh_cjk_analyzer',
+                },
+                'product_name': {
+                    'type': 'text',
+                    'analyzer': 'zh_cjk_analyzer',
+                    'search_analyzer': 'zh_cjk_analyzer',
+                    'fields': {
+                        'keyword': {'type': 'keyword', 'ignore_above': 512},
+                    },
+                },
+                'category': {
+                    'type': 'text',
+                    'analyzer': 'zh_cjk_analyzer',
+                    'search_analyzer': 'zh_cjk_analyzer',
+                },
+                'audience': {
+                    'type': 'text',
+                    'analyzer': 'zh_cjk_analyzer',
+                    'search_analyzer': 'zh_cjk_analyzer',
+                },
+                'product_type': {
+                    'type': 'text',
+                    'analyzer': 'zh_cjk_analyzer',
+                    'search_analyzer': 'zh_cjk_analyzer',
+                    'fields': {
+                        'keyword': {'type': 'keyword', 'ignore_above': 512},
+                    },
+                },
+                'price_band_text': {
+                    'type': 'keyword',
+                    'ignore_above': 128,
+                },
+                'price_band_low': {'type': 'integer'},
+                'price_band_high': {'type': 'integer'},
+                'sku': {
+                    'type': 'keyword',
+                    'normalizer': 'lowercase_normalizer',
+                },
+                'chunk_id': {'type': 'keyword'},
                 'source_file': {'type': 'keyword'},
+                # metadata 只保留原始信息用于排障/展示，不参与 BM25 建模，避免动态字段膨胀。
+                'metadata': {'type': 'object', 'enabled': False},
             }}
         )
         logger.info('Created ES index: %s', index_name)
@@ -204,12 +348,7 @@ def index_elasticsearch(docs, host='localhost', port=9200, reset=False):
         actions = [
             {
                 '_index': index_name,
-                '_source': {
-                    'text':        d.page_content[:2000],
-                    'chunk_id':    d.metadata.get('chunk_id', ''),
-                    'source_file': d.metadata.get('source_file', ''),
-                    'metadata':    {k: str(v) for k, v in d.metadata.items()},
-                }
+                '_source': _extract_search_fields(d)
             }
             for d in batch
         ]

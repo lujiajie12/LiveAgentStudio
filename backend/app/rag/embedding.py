@@ -4,6 +4,7 @@ Embedding model and Milvus vector store utilities.
 
 import json
 import logging
+import os
 import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
@@ -60,18 +61,42 @@ class BGEEmbeddingModel(EmbeddingModel):
         from app.core.config import settings
 
         self.model_name = model_name or settings.EMBEDDING_MODEL
+        self.model_source = self._resolve_model_source(self.model_name, settings.EMBEDDING_MODEL_PATH)
         self.device = self._resolve_device(device or settings.EMBEDDING_DEVICE)
         self.model = None
         self.embedding_dim = settings.EMBEDDING_DIM
         self.batch_size = max(1, batch_size or settings.EMBEDDING_BATCH_SIZE)
+        self.local_files_only = bool(settings.EMBEDDING_LOCAL_FILES_ONLY)
+        self.cache_dir = settings.EMBEDDING_CACHE_DIR or None
 
         try:
             from sentence_transformers import SentenceTransformer
 
-            self.model = SentenceTransformer(self.model_name, device=self.device)
+            # 中文检索线上查询必须与离线建索引使用同一套 embedding 配置。
+            # 这里优先读取本地显式目录，其次读取本地缓存，并默认禁止查询阶段再去外网探测，
+            # 否则会出现“建索引成功、在线查询时向量模型却因为网络失败而不可用”的假故障。
+            if self.local_files_only:
+                os.environ.setdefault("HF_HUB_OFFLINE", "1")
+                os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+                os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
+            try:
+                self.model = SentenceTransformer(
+                    self.model_source,
+                    device=self.device,
+                    cache_folder=self.cache_dir,
+                    local_files_only=self.local_files_only,
+                )
+            except TypeError:
+                self.model = SentenceTransformer(
+                    self.model_source,
+                    device=self.device,
+                    cache_folder=self.cache_dir,
+                )
             logger.info(
-                "Loaded embedding model %s on device=%s batch_size=%d",
+                "Loaded embedding model %s (source=%s, local_only=%s) on device=%s batch_size=%d",
                 self.model_name,
+                self.model_source,
+                self.local_files_only,
                 self.device,
                 self.batch_size,
             )
@@ -80,7 +105,11 @@ class BGEEmbeddingModel(EmbeddingModel):
                 "Please install sentence-transformers: pip install sentence-transformers"
             ) from exc
         except Exception as exc:
-            raise RuntimeError(f"Failed to load embedding model: {exc}") from exc
+            raise RuntimeError(
+                "Failed to load embedding model: "
+                f"model={self.model_name}, source={self.model_source}, "
+                f"local_files_only={self.local_files_only}, error={exc}"
+            ) from exc
 
     async def embed_text(self, text: str) -> List[float]:
         embedding = self.model.encode(text, convert_to_numpy=True, show_progress_bar=False)
@@ -110,6 +139,19 @@ class BGEEmbeddingModel(EmbeddingModel):
             logger.warning("Unable to probe CUDA availability: %s; falling back to CPU", exc)
 
         return "cpu"
+
+    def _resolve_model_source(
+        self,
+        model_name: str,
+        configured_path: Optional[str],
+    ) -> str:
+        # 企业化部署里，离线建索引和在线检索必须共享同一模型来源。
+        # 如果显式配置了本地目录且目录存在，就固定走本地目录；
+        # 否则回退到标准模型名，让 sentence-transformers 从本地缓存读取。
+        normalized_path = str(configured_path or "").strip()
+        if normalized_path and os.path.exists(normalized_path):
+            return normalized_path
+        return model_name
 
     def _encode_texts(self, texts: List[str], batch_size: int) -> List[List[float]]:
         try:

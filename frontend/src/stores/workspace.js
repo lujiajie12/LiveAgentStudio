@@ -183,6 +183,29 @@ function qaCardTimestamp(card) {
   return Number.isFinite(timestamp) ? timestamp : 0
 }
 
+function opsCardIsPlaceholder(card) {
+  const template = defaultActionCards().ops
+  return !card || card.status === 'idle' || !card.content || card.content === template.content
+}
+
+function shouldKeepCurrentOpsCard(currentOps, incomingOps, isStreamingOps = false) {
+  if (!currentOps || opsCardIsPlaceholder(currentOps)) {
+    return false
+  }
+  if (isStreamingOps) {
+    return true
+  }
+  if (opsCardIsPlaceholder(incomingOps)) {
+    return true
+  }
+  const currentTs = qaCardTimestamp(currentOps)
+  const incomingTs = qaCardTimestamp(incomingOps)
+  if (currentTs && !incomingTs) {
+    return true
+  }
+  return currentTs > incomingTs
+}
+
 function shouldKeepCurrentQaCard(currentQa, incomingQa, isStreamingQa = false) {
   if (!currentQa || qaCardIsPlaceholder(currentQa)) {
     return false
@@ -209,7 +232,7 @@ function shouldKeepCurrentQaCard(currentQa, incomingQa, isStreamingQa = false) {
 function normalizeActionCardFromMessage(message) {
   const metadata = message.metadata || {}
   const intent = metadata.agent_name || message.agent_name || metadata.response_kind || message.intent || 'qa'
-  const isDirect = intent === 'direct' || intent === 'direct_reply'
+  const isDirect = intent === 'direct' || intent === 'direct_reply' || intent === 'skill'
 
   if (intent === 'qa' || isDirect) {
     return {
@@ -246,7 +269,11 @@ function normalizeActionCardFromMessage(message) {
       content: message.content || '',
       detail: metadata.script_reason || metadata.route_reason || '已生成新的运营建议',
       references: metadata.references || [],
-      metadata
+      metadata: {
+        ...metadata,
+        message_id: message.id,
+        message_created_at: message.created_at || new Date().toISOString()
+      }
     }
   }
 
@@ -342,12 +369,15 @@ function buildHistoryCitation(message) {
   if (resolveHistoryAgentName(message) === 'direct' || resolveHistoryAgentName(message) === 'direct_reply') {
     return '快速直答，无需知识库检索'
   }
+  if (resolveHistoryAgentName(message) === 'skill') {
+    return 'Skill 预设回答'
+  }
   return '引用系统问答记录'
 }
 
 function buildQaHistoryEntry(message, question = '') {
   const agentName = resolveHistoryAgentName(message)
-  if (!['qa', 'direct', 'direct_reply'].includes(agentName)) {
+  if (!['qa', 'direct', 'direct_reply', 'skill'].includes(agentName)) {
     return null
   }
 
@@ -657,9 +687,14 @@ export const useWorkspaceStore = defineStore('workspace', {
         cards[card.key] = card
       }
       const currentQa = this.actionCenter.qa
-      const isStreamingQa = this.isStreaming && this.streamingKey === 'qa'
+      const isStreamingQa = this.isStreaming && (this.streamingKey === 'qa' || this.awaitingFirstToken)
       if (shouldKeepCurrentQaCard(currentQa, cards.qa, isStreamingQa)) {
         cards.qa = currentQa
+      }
+      const currentOps = this.actionCenter.ops
+      const isStreamingOps = this.isStreaming && this.streamingKey === 'ops'
+      if (shouldKeepCurrentOpsCard(currentOps, cards.ops, isStreamingOps)) {
+        cards.ops = currentOps
       }
       this.actionCenter = cards
       this.dismissedActionKeys = []
@@ -847,6 +882,8 @@ export const useWorkspaceStore = defineStore('workspace', {
       }
       this.dismissedActionKeys = []
       this.streamingKey = ''
+      // Refresh QA history so the final answer appears immediately
+      this.hydrateQaHistoryFromMessages(this.activeSessionId, this.messagesBySession[this.activeSessionId] || [])
     },
     async executeMessage(text, source = 'manual') {
       const content = String(text || '').trim()

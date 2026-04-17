@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any
 
@@ -117,7 +118,7 @@ async def barrage_stream(websocket: WebSocket):
             payload = await queue.get()
             payload["session_id"] = session_id
             await websocket.send_json(payload)
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, asyncio.CancelledError):
         pass
     finally:
         await container.live_barrage_service.unsubscribe(session_id, queue)

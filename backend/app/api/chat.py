@@ -1,4 +1,6 @@
 import asyncio
+import logging
+import time
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -11,6 +13,7 @@ from app.schemas.auth import CurrentUser
 from app.services.streaming_service import format_sse_event
 
 router = APIRouter(tags=["chat"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/chat/stream")
@@ -21,9 +24,12 @@ async def stream_chat(
     container=Depends(get_container),
 ):
     trace_id = getattr(request.state, "trace_id", None) or get_trace_id()
+    t0 = time.perf_counter()
+    logger.info(f"[TIMING][{trace_id}] request_received query='{payload.user_input[:50]}'")
 
     async def event_generator():
         try:
+            t_meta = time.perf_counter()
             yield format_sse_event(
                 ChatEvent(
                     event="meta",
@@ -35,6 +41,8 @@ async def stream_chat(
                     },
                 )
             )
+            logger.info(f"[TIMING][{trace_id}] meta_pending_sent t={((time.perf_counter()-t0)*1000):.0f}ms")
+
             task = asyncio.create_task(
                 container.chat_service.run_chat(
                     payload, current_user.id, trace_id, current_user.role.value
@@ -42,9 +50,11 @@ async def stream_chat(
             )
 
             while not task.done():
-                await asyncio.sleep(0.8)
+                await asyncio.sleep(5)
                 if task.done():
                     break
+                t_elapsed = (time.perf_counter() - t0) * 1000
+                logger.info(f"[TIMING][{trace_id}] still_processing t={t_elapsed:.0f}ms")
                 yield format_sse_event(
                     ChatEvent(
                         event="status",
@@ -52,12 +62,15 @@ async def stream_chat(
                             "trace_id": trace_id,
                             "session_id": payload.session_id,
                             "stage": "processing",
-                            "message": "系统正在分析问题并准备回答...",
+                            "message": f"系统正在分析问题并准备回答... ({int(t_elapsed/1000)}s)",
                         },
                     )
                 )
 
             result, assistant_message = await task
+            t_done = time.perf_counter()
+            logger.info(f"[TIMING][{trace_id}] task_completed t={((t_done-t0)*1000):.0f}ms intent={result.get('intent')}")
+
             yield format_sse_event(
                 ChatEvent(
                     event="meta",
@@ -69,9 +82,19 @@ async def stream_chat(
                     },
                 )
             )
+            logger.info(f"[TIMING][{trace_id}] meta_done_sent t={((time.perf_counter()-t0)*1000):.0f}ms")
+
+            first_token_sent = False
             for chunk in container.streaming_service.chunk_text(result["final_output"]):
+                if not first_token_sent:
+                    t_first = time.perf_counter()
+                    logger.info(f"[TIMING][{trace_id}] first_token_sent t={((t_first-t0)*1000):.0f}ms")
+                    first_token_sent = True
                 yield format_sse_event(ChatEvent(event="token", data={"content": chunk}))
                 await asyncio.sleep(container.streaming_service.event_delay_ms / 1000)
+
+            t_final = time.perf_counter()
+            logger.info(f"[TIMING][{trace_id}] stream_done total={((t_final-t0)*1000):.0f}ms chunks={len(result.get('final_output',''))}")
             yield format_sse_event(
                 ChatEvent(
                     event="final",
@@ -85,6 +108,7 @@ async def stream_chat(
                 )
             )
         except Exception as exc:
+            logger.error(f"[TIMING][{trace_id}] stream_error t={((time.perf_counter()-t0)*1000):.0f}ms error={exc}")
             yield format_sse_event(
                 ChatEvent(
                     event="error",

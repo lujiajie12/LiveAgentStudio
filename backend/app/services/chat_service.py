@@ -26,7 +26,8 @@ class _DefaultSettingsService:
 
 
 class ChatService:
-    # 聚合会话、消息、记忆、偏好与图运行时，负责统一聊天主链编排。
+    # ChatService 是在线聊天主链的总编排层：
+    # 负责会话补全、消息落库、状态构造、图运行、记忆刷新，以及最终回复的持久化。
     def __init__(
         self,
         graph_runtime: GraphRuntime,
@@ -45,7 +46,9 @@ class ChatService:
         self.settings_service = settings_service or _DefaultSettingsService()
         self.qa_memory_hook = qa_memory_hook
 
-    # 如果当前 session 不存在则创建，存在则保持原状态继续复用。
+    # 确保会话存在。
+    # 如果 session 已存在，则直接复用；如果不存在，则创建一条 active 会话记录，
+    # 这样后面的消息、记忆、工具日志都能挂在同一个 session 下。
     async def ensure_session(self, session_id: str, user_id: str) -> SessionRecord:
         session = await self.session_repository.get(session_id)
         if session is None:
@@ -53,7 +56,8 @@ class ChatService:
             await self.session_repository.save(session)
         return session
 
-    # 持久化用户消息，保证后续复盘、记忆和追踪都能拿到原始输入。
+    # 持久化用户消息。
+    # 这里先存原始输入，避免后续图运行失败时连“用户到底问了什么”都无从追踪。
     async def persist_user_message(self, session_id: str, content: str) -> MessageRecord:
         return await self.message_repository.create(
             MessageRecord(
@@ -63,7 +67,9 @@ class ChatService:
             )
         )
 
-    # 持久化 assistant 输出，并把 agent 相关元数据写入消息记录。
+    # 持久化 assistant 消息。
+    # 除了回复正文，这里还会把 agent、路由、工具、引用、记忆命中等 metadata 一并存下，
+    # 方便前端展示和后端排障。
     async def persist_assistant_message(
         self,
         session_id: str,
@@ -82,7 +88,9 @@ class ChatService:
             )
         )
 
-    # 统一构造图运行状态，把记忆、偏好和实时快照在进入 LangGraph 前补齐。
+    # 统一构造图运行状态。
+    # 这里会把请求参数、短期记忆、用户偏好、敏感词配置、直播快照等上下文整合进 state，
+    # 后面的 planner / executor / qa / guardrail 都基于这份 state 工作。
     async def _build_state(
         self,
         request: ChatStreamRequest,
@@ -91,12 +99,17 @@ class ChatService:
         user_role: str | None,
         trace_id: str,
     ) -> dict:
+        # 先拿短期记忆快照，里面包含最近几轮对话与会话热词。
         memory_snapshot = await self.memory_service.get_memory_snapshot(request.session_id)
+        # 再拿用户级偏好，例如脚本风格、自定义敏感词。
         preferences = await self.settings_service.get_agent_preferences(user_id)
 
+        # 请求级参数优先于偏好配置；这次请求显式指定了 script_style 就优先采用。
         resolved_script_style = request.script_style or preferences.script_style
         custom_sensitive_terms = preferences.custom_sensitive_terms
 
+        # 返回统一 state。
+        # 注意：这里是“图运行的上下文输入”，不是最终要落库的消息 metadata。
         return {
             "trace_id": trace_id,
             "session_id": request.session_id,
@@ -115,7 +128,8 @@ class ChatService:
             "live_offer_snapshot": request.live_offer_snapshot,
         }
 
-    # 从图运行结果中抽取需要落库和前端消费的标准 metadata。
+    # 从图运行结果中抽取标准 metadata。
+    # 这份 metadata 会跟 assistant 消息一起落库，也会被前端用于展示工具、引用和路由信息。
     def _build_message_metadata(self, result: dict) -> dict:
         metadata = {
             "agent_name": result.get("agent_name"),
@@ -137,6 +151,7 @@ class ChatService:
             "planner_trace": result.get("planner_trace", []),
             "executor_observations": result.get("executor_observations", []),
             "rewritten_query": result.get("rewritten_query"),
+            "query_budget": result.get("query_budget"),
             "qa_confidence": result.get("qa_confidence"),
             "references": result.get("references", []),
             "unresolved": result.get("unresolved", False),
@@ -161,7 +176,12 @@ class ChatService:
             metadata["report_id"] = result.get("report_id")
         return metadata
 
-    # 处理在线聊天主链：会话补全、消息落库、状态构造、图调用、记忆刷新和最终落消息。
+    # 处理在线聊天主链：
+    # 1. 补全/更新会话
+    # 2. 先落用户消息
+    # 3. 构造 state 并调用 LangGraph 主图
+    # 4. 抽取 metadata 并落 assistant 消息
+    # 5. 刷新短期记忆，并在 QA 场景下沉淀长期记忆
     async def run_chat(
         self,
         request: ChatStreamRequest,
@@ -169,23 +189,32 @@ class ChatService:
         trace_id: str,
         user_role: str | None = None,
     ) -> tuple[dict, MessageRecord]:
+        # 先确保会话存在，再把本轮直播态信息写回 session。
+        # 这样后续服务只拿 session，也能知道当前商品和直播阶段。
         session = await self.ensure_session(request.session_id, user_id)
         session.current_product_id = request.current_product_id
         session.live_stage = request.live_stage
         await self.session_repository.save(session)
 
+        # 用户消息必须先入库，避免中途失败后无法复盘原始问题。
         await self.persist_user_message(request.session_id, request.user_input)
 
+        # 绑定本轮会话级可观测上下文。
+        # 从这里开始，图中所有节点和工具日志都会自动关联到当前 session。
         with bind_observability(request.session_id, self.tool_log_repository):
+            # 组装图运行需要的完整上下文。
             state = await self._build_state(
                 request,
                 user_id=user_id,
                 user_role=user_role,
                 trace_id=trace_id,
             )
+            # 正式进入 LangGraph 主图，得到本轮编排后的完整结果。
             result = await self.graph_runtime.ainvoke(state)
 
+        # 把运行结果压缩成更适合落库和前端展示的 metadata。
         metadata = self._build_message_metadata(result)
+        # 最终 assistant 消息和 metadata 一起持久化。
         assistant = await self.persist_assistant_message(
             session_id=request.session_id,
             content=result["final_output"],
@@ -193,7 +222,8 @@ class ChatService:
             metadata=metadata,
         )
 
-        # 异步外置前先至少把最新会话短期记忆刷新回 Redis，Redis 故障时自动降级为空记忆模式。
+        # 至少先把最新短期记忆刷新回 Redis。
+        # 即便长期记忆链路出问题，下一轮对话也仍然能读到最近上下文。
         await self.memory_service.refresh_short_term_memory(
             request.session_id,
             request.current_product_id,
@@ -202,6 +232,8 @@ class ChatService:
         )
         if self.qa_memory_hook is not None and result.get("agent_name") == "qa":
             try:
+                # 只有 QA 场景写长期记忆。
+                # direct/script/analyst 这类结果很多是流程性或一次性内容，不适合直接沉淀。
                 await self.qa_memory_hook.remember_qa_interaction(
                     user_input=request.user_input,
                     assistant_output=result["final_output"],
@@ -211,5 +243,8 @@ class ChatService:
                     metadata=metadata,
                 )
             except Exception:
+                # 长期记忆写入失败不影响主链返回，避免把增强能力做成单点故障。
                 pass
+        # 同时返回运行结果和已落库的 assistant 消息。
+        # 上层既可以拿 result 做调试，也可以拿 assistant 做展示。
         return result, assistant

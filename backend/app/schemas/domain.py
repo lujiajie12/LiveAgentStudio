@@ -32,6 +32,7 @@ class LiveStage(str, Enum):
 
 
 class IntentType(str, Enum):
+    direct = "direct"
     qa = "qa"
     script = "script"
     analyst = "analyst"

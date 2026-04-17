@@ -4,4 +4,6 @@ Avoid eager submodule imports here; import concrete modules directly where
 needed to prevent circular imports at startup.
 """
 
-__all__: list[str] = []
+from typing import List
+
+__all__: List[str] = []
