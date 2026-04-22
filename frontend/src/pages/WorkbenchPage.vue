@@ -392,8 +392,9 @@
                   </div>
                   <span class="studio-v2__action-badge studio-v2__action-badge--safe">安全</span>
                 </header>
-                <div class="studio-v2__action-safe">
-                  <p>{{ card.content }}</p>
+                <div class="studio-v2__action-safe studio-v2__action-safe--compact">
+                  <span class="studio-v2__safe-dot"></span>
+                  <p>{{ card.detail || '最近一次输出已通过合规校验' }}</p>
                 </div>
               </template>
 
@@ -579,20 +580,23 @@ const qaTimeline = computed(() => {
     // 流式期间 activeRequestText 保留当前问题，不依赖已清空的 activeMessages
     const currentQuestion = workspace.activeRequestText || ''
     const currentAnswer = workspace.actionCenter.qa?.content || ''
+    const metadata = workspace.actionCenter.qa?.metadata || {}
     if (currentQuestion && currentAnswer) {
       items.push({
         id: `streaming-${Date.now()}`,
         question: currentQuestion,
         answer: currentAnswer,
         references: workspace.actionCenter.qa?.references || [],
-        type: workspace.actionCenter.qa?.metadata?.response_kind === 'direct' ? 'Direct' : 'RAG',
-        tagTone: workspace.actionCenter.qa?.metadata?.response_kind === 'direct' ? 'stream' : 'rag',
+        type: metadata.display_type || resolveHistoryType(metadata.response_kind),
+        tagTone: metadata.tag_tone || resolveHistoryTone(metadata.response_kind),
+        sourceAgent: metadata.response_kind || 'qa',
         streaming: true,
         createdAt: new Date().toISOString(),
         timeLabel: '刚刚',
         citation: buildCitation(
           workspace.actionCenter.qa?.references || [],
-          workspace.actionCenter.qa?.metadata?.response_kind
+          metadata.response_kind,
+          metadata
         )
       })
     }
@@ -655,12 +659,59 @@ function formatRelativeTime(value) {
   return `${Math.floor(diffHours / 24)} 天前`
 }
 
-function buildCitation(references, responseKind) {
+function resolveHistoryType(responseKind) {
+  if (responseKind === 'direct') {
+    return 'Direct'
+  }
+  if (responseKind === 'script') {
+    return '脚本'
+  }
+  if (responseKind === 'analyst') {
+    return '复盘'
+  }
+  if (responseKind === 'tool_datetime') {
+    return '日期时间'
+  }
+  if (responseKind === 'tool_web_search') {
+    return '联网搜索'
+  }
+  if (responseKind === 'tool_memory') {
+    return '记忆召回'
+  }
+  return 'RAG'
+}
+
+function resolveHistoryTone(responseKind) {
+  if (responseKind === 'direct') {
+    return 'stream'
+  }
+  if (responseKind === 'script') {
+    return 'script'
+  }
+  if (responseKind === 'analyst') {
+    return 'analyst'
+  }
+  if (String(responseKind || '').startsWith('tool_')) {
+    return 'tool'
+  }
+  return 'rag'
+}
+
+function buildCitation(references, responseKind, metadata = {}) {
+  if (metadata.display_detail) {
+    return metadata.display_detail
+  }
   if (Array.isArray(references) && references.length) {
     return `引用 ${references.length} 条知识片段`
   }
   if (responseKind === 'direct') {
     return '快速直答，无需知识库检索'
+  }
+  if (responseKind === 'script') {
+    return '脚本生成记录'
+  }
+  if (responseKind === 'analyst') {
+    return '复盘分析记录'
   }
   return '引用系统问答记录'
 }
@@ -728,13 +779,22 @@ function qaBadgeLabel(card) {
   if (workspace.isStreaming && workspace.streamingKey === 'qa') {
     return '流式生成中'
   }
+  if (card?.metadata?.display_type) {
+    return card.metadata.display_type
+  }
   if (card?.metadata?.response_kind === 'direct') {
     return '快速直答'
+  }
+  if (card?.metadata?.response_kind === 'script') {
+    return '口播脚本'
+  }
+  if (card?.metadata?.response_kind === 'analyst') {
+    return '复盘分析'
   }
   if (Array.isArray(card.references) && card.references.length) {
     return `引用 ${card.references.length} 条知识片段`
   }
-  return '等待新的 QA 请求'
+  return '等待新的 AI 请求'
 }
 
 function qaBadgeClass() {
@@ -746,6 +806,16 @@ function qaBadgeClass() {
   }
   if (workspace.isStreaming && workspace.streamingKey === 'qa') {
     return 'studio-v2__action-badge--streaming'
+  }
+  const responseKind = workspace.actionCenter.qa?.metadata?.response_kind || ''
+  if (String(responseKind).startsWith('tool_')) {
+    return 'studio-v2__action-badge--tool'
+  }
+  if (responseKind === 'script') {
+    return 'studio-v2__action-badge--warning'
+  }
+  if (responseKind === 'analyst') {
+    return 'studio-v2__action-badge--pending'
   }
   return ''
 }
@@ -779,7 +849,7 @@ async function pushCardToTeleprompter(card) {
 }
 
 async function pushQaHistoryToTeleprompter(item) {
-  await workspace.pushTeleprompter('qa', buildTeleprompterPayload(item, item.type === 'Direct' ? 'direct' : 'qa'))
+  await workspace.pushTeleprompter('qa', buildTeleprompterPayload(item, item.sourceAgent || (item.type === 'Direct' ? 'direct' : 'qa')))
 }
 
 function dismissQaHistoryItem(itemId) {

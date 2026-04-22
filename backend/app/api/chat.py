@@ -78,6 +78,10 @@ async def stream_chat(
                         "trace_id": trace_id,
                         "session_id": payload.session_id,
                         "intent": result["intent"],
+                        "agent_name": result.get("agent_name"),
+                        "tool_intent": result.get("tool_intent"),
+                        "planner_action": result.get("planner_action"),
+                        "tools_used": result.get("tools_used", []),
                         "pending": False,
                     },
                 )

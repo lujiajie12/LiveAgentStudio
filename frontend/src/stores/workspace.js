@@ -110,13 +110,13 @@ function defaultActionCards() {
   return {
     qa: {
       key: 'qa',
-      title: 'RAG 知识 Agent',
-      subtitle: '实时解答',
+      title: 'AI 当前输出',
+      subtitle: '等待请求',
       tone: 'indigo',
       status: 'idle',
       editable: true,
-      content: '左侧高优问题交给 AI 生成后，这里会流式显示结合知识库与大模型生成的结果。',
-      detail: '等待新的 QA 请求',
+      content: '左侧高优问题或下方指令交给 AI 生成后，这里会展示 QA、直答、脚本和复盘的最新结果。',
+      detail: '等待新的 AI 请求',
       references: [],
       metadata: {}
     },
@@ -143,7 +143,7 @@ function defaultActionCards() {
       tone: 'yellow',
       status: 'idle',
       editable: true,
-      content: '当前暂无运营控场建议。可以从左侧高优问题区或 RAG 卡片输入框触发 Script Agent。',
+      content: '当前暂无运营控场建议。可以从左侧高优问题区或主输出输入框触发 Script Agent。',
       detail: '等待新的控场脚本输出',
       references: [],
       metadata: {
@@ -163,10 +163,130 @@ function defaultActionCards() {
 }
 
 function mapIntentToActionKey(intent) {
-  if (intent === 'script' || intent === 'analyst') {
-    return 'ops'
-  }
+  // 主输出卡统一承载 QA / direct / script / analyst / tool 结果。
+  // Ops 卡只展示策略和下一步方案，不再承载完整脚本文案。
+  void intent
   return 'qa'
+}
+
+function normalizeIntentName(intent) {
+  return String(intent || '').trim().toLowerCase()
+}
+
+function resolveToolPresentation(metadata = {}) {
+  const toolIntent = normalizeIntentName(metadata.tool_intent)
+  const plannerAction = normalizeIntentName(metadata.planner_action)
+  const toolsUsed = Array.isArray(metadata.tools_used) ? metadata.tools_used.map(normalizeIntentName) : []
+
+  if (toolIntent === 'datetime' || plannerAction === 'call_datetime') {
+    return {
+      title: 'Tool Agent',
+      subtitle: '日期时间',
+      tone: 'blue',
+      responseKind: 'tool_datetime',
+      type: '日期时间',
+      tagTone: 'tool',
+      detail: '已调用日期时间工具'
+    }
+  }
+
+  if (
+    toolIntent === 'web_search'
+    || plannerAction === 'call_web_search'
+    || toolsUsed.includes('google_search')
+  ) {
+    return {
+      title: 'Tool Agent',
+      subtitle: '联网搜索',
+      tone: 'blue',
+      responseKind: 'tool_web_search',
+      type: '联网搜索',
+      tagTone: 'tool',
+      detail: '已调用联网搜索工具'
+    }
+  }
+
+  if (toolIntent === 'memory_recall' || plannerAction === 'recall_memory') {
+    return {
+      title: 'Tool Agent',
+      subtitle: '记忆召回',
+      tone: 'blue',
+      responseKind: 'tool_memory',
+      type: '记忆召回',
+      tagTone: 'tool',
+      detail: '已调用记忆召回工具'
+    }
+  }
+
+  return null
+}
+
+function resolveOutputPresentation(intent, metadata = {}) {
+  if (metadata.pending) {
+    return {
+      title: 'AI 当前输出',
+      subtitle: '路由判断中',
+      tone: 'indigo',
+      responseKind: 'pending',
+      type: '处理中',
+      tagTone: 'stream',
+      detail: '正在判断应该由哪个 Agent 或工具处理'
+    }
+  }
+
+  const toolPresentation = resolveToolPresentation(metadata)
+  if (toolPresentation) {
+    return toolPresentation
+  }
+
+  const normalized = normalizeIntentName(intent)
+  if (normalized === 'direct' || normalized === 'direct_reply' || normalized === 'skill') {
+    return {
+      title: 'Direct Agent',
+      subtitle: '快速直答',
+      tone: 'indigo',
+      responseKind: 'direct',
+      type: 'Direct',
+      tagTone: 'stream',
+      detail: normalized === 'skill' ? 'Skill 预设回答' : '直接回复，无需知识库检索'
+    }
+  }
+
+  if (normalized === 'script') {
+    return {
+      title: 'Script Agent',
+      subtitle: '口播脚本',
+      tone: 'yellow',
+      responseKind: 'script',
+      type: '脚本',
+      tagTone: 'script',
+      detail: metadata.script_reason || metadata.route_reason || '已生成直播口播脚本'
+    }
+  }
+
+  if (normalized === 'analyst') {
+    return {
+      title: 'Analyst Agent',
+      subtitle: '复盘分析',
+      tone: 'blue',
+      responseKind: 'analyst',
+      type: '复盘',
+      tagTone: 'analyst',
+      detail: metadata.route_reason || '已生成复盘分析'
+    }
+  }
+
+  return {
+    title: 'RAG 知识 Agent',
+    subtitle: '实时解答',
+    tone: 'indigo',
+    responseKind: 'qa',
+    type: 'RAG',
+    tagTone: 'rag',
+    detail: metadata.unresolved
+      ? '知识库命中不足，建议人工复核'
+      : `引用 ${metadata.references?.length || 0} 条知识片段`
+  }
 }
 
 function qaCardIsPlaceholder(card) {
@@ -232,52 +352,32 @@ function shouldKeepCurrentQaCard(currentQa, incomingQa, isStreamingQa = false) {
 function normalizeActionCardFromMessage(message) {
   const metadata = message.metadata || {}
   const intent = metadata.agent_name || message.agent_name || metadata.response_kind || message.intent || 'qa'
-  const isDirect = intent === 'direct' || intent === 'direct_reply' || intent === 'skill'
+  const presentation = resolveOutputPresentation(intent, metadata)
 
-  if (intent === 'qa' || isDirect) {
-    return {
-      key: 'qa',
-      title: 'RAG 知识 Agent',
-      subtitle: isDirect ? '快速直答' : '实时解答',
-      tone: 'indigo',
-      status: metadata.unresolved ? 'warning' : 'ready',
-      editable: true,
-      content: message.content || '',
-      detail: isDirect
-        ? '直接回复，无需知识库检索'
-        : metadata.unresolved
-          ? '知识库命中不足，建议人工复核'
-          : `引用 ${metadata.references?.length || 0} 条知识片段`,
-      references: metadata.references || [],
-      metadata: {
-        ...metadata,
-        message_id: message.id,
-        message_created_at: message.created_at || new Date().toISOString(),
-        response_kind: isDirect ? 'direct' : 'qa'
-      }
-    }
+  if (!presentation) {
+    return null
   }
 
-  if (intent === 'script' || intent === 'analyst') {
-    return {
-      key: 'ops',
-      title: '运营控场编排',
-      subtitle: intent === 'analyst' ? '复盘辅助' : '流量策略提醒',
-      tone: intent === 'analyst' ? 'blue' : 'yellow',
-      status: 'ready',
-      editable: true,
-      content: message.content || '',
-      detail: metadata.script_reason || metadata.route_reason || '已生成新的运营建议',
-      references: metadata.references || [],
-      metadata: {
-        ...metadata,
-        message_id: message.id,
-        message_created_at: message.created_at || new Date().toISOString()
-      }
+  return {
+    key: 'qa',
+    title: presentation.title,
+    subtitle: presentation.subtitle,
+    tone: presentation.tone,
+    status: metadata.unresolved ? 'warning' : 'ready',
+    editable: true,
+    content: message.content || '',
+    detail: presentation.detail,
+    references: metadata.references || [],
+    metadata: {
+      ...metadata,
+      message_id: message.id,
+      message_created_at: message.created_at || new Date().toISOString(),
+      response_kind: presentation.responseKind,
+      display_type: presentation.type,
+      tag_tone: presentation.tagTone,
+      display_detail: presentation.detail
     }
   }
-
-  return null
 }
 
 function buildGuardrailCardFromMessage(message) {
@@ -362,14 +462,25 @@ function resolveHistoryAgentName(message) {
 
 function buildHistoryCitation(message) {
   const metadata = message?.metadata || {}
+  const toolPresentation = resolveToolPresentation(metadata)
+  if (toolPresentation) {
+    return toolPresentation.detail
+  }
   const references = metadata.references
   if (Array.isArray(references) && references.length) {
     return `引用 ${references.length} 条知识片段`
   }
-  if (resolveHistoryAgentName(message) === 'direct' || resolveHistoryAgentName(message) === 'direct_reply') {
+  const agentName = resolveHistoryAgentName(message)
+  if (agentName === 'direct' || agentName === 'direct_reply') {
     return '快速直答，无需知识库检索'
   }
-  if (resolveHistoryAgentName(message) === 'skill') {
+  if (agentName === 'script') {
+    return '脚本生成记录'
+  }
+  if (agentName === 'analyst') {
+    return '复盘分析记录'
+  }
+  if (agentName === 'skill') {
     return 'Skill 预设回答'
   }
   return '引用系统问答记录'
@@ -377,7 +488,9 @@ function buildHistoryCitation(message) {
 
 function buildQaHistoryEntry(message, question = '') {
   const agentName = resolveHistoryAgentName(message)
-  if (!['qa', 'direct', 'direct_reply', 'skill'].includes(agentName)) {
+  const metadata = message.metadata || {}
+  const presentation = resolveOutputPresentation(agentName, metadata)
+  if (!['qa', 'direct', 'direct_reply', 'skill', 'script', 'analyst'].includes(agentName) && !resolveToolPresentation(metadata)) {
     return null
   }
 
@@ -385,9 +498,10 @@ function buildQaHistoryEntry(message, question = '') {
     id: message.id,
     question: question || '',
     answer: message.content || '',
-    references: message.metadata?.references || [],
-    type: agentName === 'qa' ? 'RAG' : 'Direct',
-    tagTone: agentName === 'qa' ? 'rag' : 'stream',
+    references: metadata.references || [],
+    type: presentation.type,
+    tagTone: presentation.tagTone,
+    sourceAgent: presentation.responseKind,
     createdAt: message.created_at || new Date().toISOString(),
     citation: buildHistoryCitation(message),
     messageId: message.id
@@ -824,18 +938,29 @@ export const useWorkspaceStore = defineStore('workspace', {
         [sessionId]: items.slice(-20)
       }
     },
-    primeStreamingCard(intent, userInput) {
+    primeStreamingCard(intent, userInput, metadata = {}) {
       const key = mapIntentToActionKey(intent)
       const template = defaultActionCards()[key]
+      const presentation = resolveOutputPresentation(intent, metadata)
       this.streamingKey = key
       this.actionCenter = {
         ...this.actionCenter,
         [key]: {
           ...template,
+          title: presentation.title,
+          subtitle: presentation.subtitle,
           status: 'streaming',
-          tone: key === 'ops' ? 'yellow' : 'indigo',
+          tone: presentation.tone,
           content: '',
-          detail: `处理中 · ${shortenText(userInput, 24)}`
+          detail: `处理中 · ${shortenText(userInput, 24)}`,
+          metadata: {
+            ...template.metadata,
+            ...metadata,
+            response_kind: presentation.responseKind,
+            display_type: presentation.type,
+            tag_tone: presentation.tagTone,
+            display_detail: presentation.detail
+          }
         }
       }
       this.dismissedActionKeys = this.dismissedActionKeys.filter((item) => item !== key)
@@ -921,7 +1046,7 @@ export const useWorkspaceStore = defineStore('workspace', {
           onEvent: (event) => {
             if (event.event === 'meta') {
               this.currentTraceId = event.data.trace_id || ''
-              this.primeStreamingCard(event.data.intent, content)
+              this.primeStreamingCard(event.data.intent, content, event.data)
               return
             }
             if (event.event === 'status') {

@@ -1544,15 +1544,20 @@ class QAAgent(BaseAgent):
 
     # 把检索结果裁成 Top-3，并统一整理成后续 Prompt 使用的结构。
     def _top_retrieved_docs(self, rerank_results: list[Any], top_k: int = 3) -> list[dict[str, Any]]:
+        threshold = settings.QA_RETRIEVAL_RELEVANCE_THRESHOLD
         docs: list[dict[str, Any]] = []
         for rank, result in enumerate(rerank_results[:top_k], start=1):
+            score = getattr(result, "final_score", 0.0)
+            if score < threshold:
+                logger.info("retrieve_doc_below_threshold doc_id=%s score=%.4f threshold=%.4f", getattr(result, "doc_id", ""), score, threshold)
+                continue
             metadata = dict(getattr(result, "metadata", {}) or {})
             docs.append(
                 {
                     "rank": rank,
                     "doc_id": getattr(result, "doc_id", ""),
                     "content": getattr(result, "content", ""),
-                    "score": getattr(result, "final_score", 0.0),
+                    "score": score,
                     "source_type": getattr(result, "source_type", ""),
                     "source_file": metadata.get("source_file", ""),
                     "metadata": metadata,
@@ -1578,6 +1583,14 @@ class QAAgent(BaseAgent):
             _, rerank_results = await self.pipeline.retrieve(
                 rewritten_query,
                 source_hint=state.get("knowledge_scope"),
+            )
+            score_summary = " | ".join(
+                f"#{i+1} {getattr(r, 'doc_id', '?')}={getattr(r, 'final_score', 0):.4f}"
+                for i, r in enumerate(rerank_results[:5])
+            )
+            logger.info(
+                "retrieve_topk_scores trace_id=%s query='%s' top_scores=[%s]",
+                state.get("trace_id"), rewritten_query[:50], score_summary,
             )
             retrieved_docs = self._top_retrieved_docs(rerank_results, top_k=3)
             await record_timed_tool_call(
@@ -1664,6 +1677,10 @@ class QAAgent(BaseAgent):
             "你是直播电商 QA 助手。"
             "必须只基于给定知识片段回答，不能编造事实。"
             "请直接输出自然中文回答，不要输出 JSON。"
+            "【关键规则——产品相关性校验】"
+            "回答前，先比对用户询问的产品/品牌与知识片段中的产品/品牌是否一致。"
+            "如果用户问的是某个具体产品或品牌（如'联想ThinkPad'），但知识片段中只有其他不相关产品的信息，"
+            "你必须回答'抱歉，知识库中暂无该产品的相关信息'，绝对不能用不相关产品的信息来回答。"
         )
         user_prompt = json.dumps(
             {
@@ -1753,7 +1770,13 @@ class QAAgent(BaseAgent):
             "Answer in Chinese and only use the provided knowledge context. "
             "If the user gives a budget or price range, prefer documents that satisfy that budget and mention the matched price band. "
             "Do not invent facts. Keep the answer concise and practical. "
-            'Return strict JSON only: {"answer":"...","references":["doc_id"],"confidence":0.0}'
+            'Return strict JSON only: {"answer":"...","references":["doc_id"],"confidence":0.0}\n'
+            "CRITICAL RULE — product relevance check: "
+            "Before answering, compare the product/brand the user is asking about with the products in the knowledge context. "
+            "If the user asks about a specific product or brand (e.g. '联想ThinkPad') but the knowledge context only contains information about DIFFERENT products/brands, "
+            "you MUST reply that the knowledge base does not have information about the requested product. "
+            "Do NOT use unrelated product information to answer questions about a product that is not in the knowledge base. "
+            "In this case set confidence to 0.0 and answer like: '抱歉，知识库中暂无该产品的相关信息。'"
         )
         system_prompt += (
             " Use knowledge_focus to determine what the user is actually asking for. "

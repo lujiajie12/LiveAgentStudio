@@ -6,6 +6,9 @@ from app.schemas.domain import MessageRecord, MessageRole
 
 
 class StubRouterAgent:
+    async def route(self, state):
+        return await self.run(state)
+
     async def run(self, state):
         _ = state
         return {
@@ -22,6 +25,9 @@ class StubRouterAgent:
 
 
 class StubMemoryRouterAgent:
+    async def route(self, state):
+        return await self.run(state)
+
     async def run(self, state):
         _ = state
         return {
@@ -85,10 +91,27 @@ class StubLLM:
     def __init__(self):
         self.responses = [
             {"rewritten_query": "What is the difference between Qinglan steam mop and a normal mop?"},
+            {"focus_fields": ["general"], "reason": "comparison question"},
             {
                 "answer": "It is better for families with children or pets, and steam cleaning is stronger than a normal mop.",
                 "references": ["doc-2", "doc-1"],
                 "confidence": 0.91,
+            },
+        ]
+
+    async def ainvoke_json(self, system_prompt: str, user_prompt: str):
+        _ = system_prompt, user_prompt
+        return self.responses.pop(0)
+
+
+class StubMemoryRecallLLM:
+    def __init__(self):
+        self.responses = [
+            {"focus": "question", "mode": "latest", "limit": 1, "reason": "latest user question"},
+            {
+                "answer": "你刚刚问的是：“Tell me about Qinglan steam mop.”。",
+                "confidence": 0.99,
+                "unresolved": False,
             },
         ]
 
@@ -191,7 +214,7 @@ def test_chat_stream_routes_noise_query_to_direct_reply(client, auth_headers):
 
     assert response.status_code == 200
     final_payload = _extract_final_payload(response.text)
-    assert final_payload["intent"] == "unknown"
+    assert final_payload["intent"] == "direct"
     assert final_payload["message"]["agent_name"] == "direct"
     assert final_payload["message"]["metadata"]["route_target"] == "direct"
     assert final_payload["message"]["metadata"]["requires_retrieval"] is False
@@ -204,6 +227,7 @@ def test_chat_stream_can_recall_last_user_question_from_short_term_memory(client
 
     _seed_memory(container, session_id)
     container.graph_runtime.router_agent = StubMemoryRouterAgent()
+    container.graph_runtime.qa_agent = QAAgent(llm_client=StubMemoryRecallLLM())
 
     response = client.post(
         "/api/v1/chat/stream",

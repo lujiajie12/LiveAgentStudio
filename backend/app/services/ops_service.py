@@ -95,12 +95,11 @@ class OpsService:
         messages = await self.message_repository.list_by_session(session_id)
         assistant_messages = [item for item in messages if item.role == MessageRole.assistant]
         latest_assistant = assistant_messages[-1] if assistant_messages else None
-        latest_qa = self._find_latest_qa_message(assistant_messages)
         latest_script = self._find_latest_agent_message(assistant_messages, "script")
         session_record = await self.session_repository.get(session_id)
 
         cards = [
-            self._build_qa_card(latest_qa),
+            self._build_qa_card(latest_assistant),
             self._build_guardrail_card(latest_assistant),
             self._build_ops_card(session_record, latest_script, messages),
         ]
@@ -207,34 +206,32 @@ class OpsService:
         if not message:
             return {
                 "key": "qa",
-                "title": "RAG 知识 Agent",
-                "subtitle": "实时解答",
+                "title": "AI 当前输出",
+                "subtitle": "等待请求",
                 "tone": "indigo",
                 "status": "idle",
                 "editable": True,
-                "content": "左侧高优问题交给 AI 生成后，这里会流式显示结合知识库与大模型生成的结果。",
-                "detail": "等待新的 QA 请求",
+                "content": "左侧高优问题或下方指令交给 AI 生成后，这里会展示 QA、直答、脚本和复盘的最新结果。",
+                "detail": "等待新的 AI 请求",
                 "references": [],
                 "metadata": {},
             }
 
         metadata = message.metadata or {}
         agent_name = message.agent_name or metadata.get("agent_name") or message.intent or "qa"
-        is_direct = agent_name in {"direct", "direct_reply"}
         references = metadata.get("references", [])
+        presentation = self._resolve_output_presentation(str(agent_name), metadata)
 
-        if is_direct:
-          detail = "直接回复，无需知识库检索"
-        elif metadata.get("unresolved"):
-          detail = "知识库命中不足，建议人工复核"
+        if metadata.get("unresolved") and presentation["response_kind"] == "qa":
+            detail = "知识库命中不足，建议人工复核"
         else:
-          detail = f"引用 {len(references)} 条知识片段"
+            detail = presentation["detail"]
 
         return {
             "key": "qa",
-            "title": "RAG 知识 Agent",
-            "subtitle": "快速直答" if is_direct else "实时解答",
-            "tone": "indigo",
+            "title": presentation["title"],
+            "subtitle": presentation["subtitle"],
+            "tone": presentation["tone"],
             "status": "ready",
             "editable": True,
             "content": message.content,
@@ -244,7 +241,10 @@ class OpsService:
                 **metadata,
                 "message_id": message.id,
                 "message_created_at": message.created_at.isoformat(),
-                "response_kind": "direct" if is_direct else "qa",
+                "response_kind": presentation["response_kind"],
+                "display_type": presentation["display_type"],
+                "tag_tone": presentation["tag_tone"],
+                "display_detail": detail,
             },
         }
 
@@ -348,6 +348,10 @@ class OpsService:
         if script_message:
             metadata = script_message.metadata or {}
             detail = metadata.get("script_reason") or "最近一条控场话术已生成，可继续推送提词器或进行 TTS 插播。"
+            content = (
+                f"{insight} 最近已生成一条口播脚本，建议根据当前互动节奏选择推送提词器、TTS 插播，"
+                "或继续生成承接话术。"
+            )
             return {
                 "key": "ops",
                 "title": "运营控场编排",
@@ -355,9 +359,9 @@ class OpsService:
                 "tone": "warning",
                 "status": "ready",
                 "editable": True,
-                "content": script_message.content,
+                "content": content,
                 "detail": detail,
-                "references": metadata.get("references", []),
+                "references": [],
                 "metadata": {
                     **metadata,
                     "trigger": "互动率波动",
@@ -375,7 +379,7 @@ class OpsService:
             }
 
         content = (
-            f"{insight} 如需控场话术，可从左侧高优问题区或 RAG 卡片输入框触发 Script Agent。"
+            f"{insight} 如需控场话术，可从左侧高优问题区或主输出输入框触发 Script Agent。"
         )
         return {
             "key": "ops",
@@ -392,6 +396,89 @@ class OpsService:
                 "insight": insight,
                 "plans": plans,
             },
+        }
+
+    def _resolve_tool_presentation(self, metadata: dict[str, Any]) -> dict[str, str] | None:
+        tool_intent = str(metadata.get("tool_intent") or "").lower()
+        planner_action = str(metadata.get("planner_action") or "").lower()
+        tools_used = {str(item).lower() for item in metadata.get("tools_used", []) or []}
+
+        if tool_intent == "datetime" or planner_action == "call_datetime":
+            return {
+                "title": "Tool Agent",
+                "subtitle": "日期时间",
+                "tone": "blue",
+                "response_kind": "tool_datetime",
+                "display_type": "日期时间",
+                "tag_tone": "tool",
+                "detail": "已调用日期时间工具",
+            }
+        if tool_intent == "web_search" or planner_action == "call_web_search" or "google_search" in tools_used:
+            return {
+                "title": "Tool Agent",
+                "subtitle": "联网搜索",
+                "tone": "blue",
+                "response_kind": "tool_web_search",
+                "display_type": "联网搜索",
+                "tag_tone": "tool",
+                "detail": "已调用联网搜索工具",
+            }
+        if tool_intent == "memory_recall" or planner_action == "recall_memory":
+            return {
+                "title": "Tool Agent",
+                "subtitle": "记忆召回",
+                "tone": "blue",
+                "response_kind": "tool_memory",
+                "display_type": "记忆召回",
+                "tag_tone": "tool",
+                "detail": "已调用记忆召回工具",
+            }
+        return None
+
+    def _resolve_output_presentation(self, agent_name: str, metadata: dict[str, Any]) -> dict[str, str]:
+        tool_presentation = self._resolve_tool_presentation(metadata)
+        if tool_presentation:
+            return tool_presentation
+
+        normalized = agent_name.lower()
+        if normalized in {"direct", "direct_reply", "skill"}:
+            return {
+                "title": "Direct Agent",
+                "subtitle": "快速直答",
+                "tone": "indigo",
+                "response_kind": "direct",
+                "display_type": "Direct",
+                "tag_tone": "stream",
+                "detail": "Skill 预设回答" if normalized == "skill" else "直接回复，无需知识库检索",
+            }
+        if normalized == "script":
+            return {
+                "title": "Script Agent",
+                "subtitle": "口播脚本",
+                "tone": "yellow",
+                "response_kind": "script",
+                "display_type": "脚本",
+                "tag_tone": "script",
+                "detail": str(metadata.get("script_reason") or metadata.get("route_reason") or "已生成直播口播脚本"),
+            }
+        if normalized == "analyst":
+            return {
+                "title": "Analyst Agent",
+                "subtitle": "复盘分析",
+                "tone": "blue",
+                "response_kind": "analyst",
+                "display_type": "复盘",
+                "tag_tone": "analyst",
+                "detail": str(metadata.get("route_reason") or "已生成复盘分析"),
+            }
+        return {
+            "title": "RAG 知识 Agent",
+            "subtitle": "实时解答",
+            "tone": "indigo",
+            "response_kind": "qa",
+            "display_type": "RAG",
+            "tag_tone": "rag",
+            "detail": f"引用 {len(metadata.get('references', []) or [])} 条知识片段",
         }
 
     def _find_latest_agent_message(self, messages: list[MessageRecord], agent_name: str) -> MessageRecord | None:

@@ -57,6 +57,10 @@ const icons = {
     { type: 'path', value: 'M2.5 6.5A2.5 2.5 0 0 1 5 4h6.5v16H5a2.5 2.5 0 0 0-2.5 2z' },
     { type: 'path', value: 'M21.5 6.5A2.5 2.5 0 0 0 19 4h-6.5v16H19a2.5 2.5 0 0 1 2.5 2z' }
   ],
+  search: [
+    { type: 'circle', cx: 11, cy: 11, r: 6.5 },
+    { type: 'path', value: 'm20 20-3.8-3.8' }
+  ],
   'list-todo': [
     { type: 'path', value: 'M10 6h10' },
     { type: 'path', value: 'M10 12h10' },
@@ -100,6 +104,17 @@ const icons = {
   'arrow-right': [
     { type: 'path', value: 'M5 12h14' },
     { type: 'path', value: 'm13 5 7 7-7 7' }
+  ],
+  'external-link': [
+    { type: 'path', value: 'M14 4h6v6' },
+    { type: 'path', value: 'M10 14 20 4' },
+    { type: 'path', value: 'M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4' }
+  ],
+  'layout-dashboard': [
+    { type: 'rect', x: 3, y: 4, width: 7, height: 7, rx: 1.5 },
+    { type: 'rect', x: 14, y: 4, width: 7, height: 5, rx: 1.5 },
+    { type: 'rect', x: 14, y: 12, width: 7, height: 8, rx: 1.5 },
+    { type: 'rect', x: 3, y: 14, width: 7, height: 6, rx: 1.5 }
   ],
   bot: [
     { type: 'rect', x: 5, y: 7, width: 14, height: 11, rx: 3 },
@@ -153,9 +168,24 @@ const icons = {
     { type: 'path', value: 'M5 5v7c0 1.7 3.1 3 7 3s7-1.3 7-3V5' },
     { type: 'path', value: 'M5 12v7c0 1.7 3.1 3 7 3s7-1.3 7-3v-7' }
   ],
+  server: [
+    { type: 'rect', x: 4, y: 4, width: 16, height: 6, rx: 1.5 },
+    { type: 'rect', x: 4, y: 14, width: 16, height: 6, rx: 1.5 },
+    { type: 'path', value: 'M7 7h.01' },
+    { type: 'path', value: 'M7 17h.01' },
+    { type: 'path', value: 'M11 7h6' },
+    { type: 'path', value: 'M11 17h6' }
+  ],
   'shield-check': [
     { type: 'path', value: 'M12 3 5 6.5V12c0 4.4 3 7.8 7 9 4-1.2 7-4.6 7-9V6.5Z' },
     { type: 'path', value: 'm9.5 12 1.8 1.8 3.7-3.8' }
+  ],
+  'file-text': [
+    { type: 'path', value: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z' },
+    { type: 'path', value: 'M14 3v5h5' },
+    { type: 'path', value: 'M9 13h6' },
+    { type: 'path', value: 'M9 17h6' },
+    { type: 'path', value: 'M9 9h2' }
   ],
   'shopping-cart': [
     { type: 'circle', cx: 9, cy: 20, r: 1.5 },

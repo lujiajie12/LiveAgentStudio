@@ -99,6 +99,9 @@ class AppSettings(BaseSettings):
     QA_MEMORY_RECALL_DEFAULT_LIMIT: int = 3
     QA_MEMORY_RECALL_MAX_ITEMS: int = 5
 
+    # RAG 检索相关性
+    QA_RETRIEVAL_RELEVANCE_THRESHOLD: float = 0.15
+
     # RAG / Embedding / Milvus
     EMBEDDING_MODEL: str = "BAAI/bge-large-zh-v1.5"
     # 可选：显式指定本地模型目录；未配置时回退到 EMBEDDING_MODEL。
