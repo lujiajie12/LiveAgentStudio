@@ -56,6 +56,45 @@ def _looks_like_noise_input(query: str) -> bool:
     return False
 
 
+def _system_help_reply(query: str) -> str | None:
+    compact = re.sub(r"\s+", "", query).lower()
+    if not compact:
+        return None
+
+    if any(term in compact for term in ("直播操作台", "直播操作中台", "studio")) and any(
+        term in compact for term in ("从哪里进入", "在哪里进入", "怎么进入", "如何进入", "入口", "打开")
+    ):
+        return (
+            "直播工作人员先进入 /studio-login 登录，登录成功后进入 /studio-v2。"
+            "后台管理首页右上角也有“进入 LiveAgent STUDIO v2.0”入口。"
+        )
+
+    if "后台管理系统" in compact and "studio" in compact and "区别" in compact:
+        return (
+            "后台管理系统面向 admin 和运维，负责离线索引、在线检索调试、QA Memory、Agent Flow、复盘报告和系统设置。"
+            "Studio 面向主播、场控、运营、客服，直播过程中处理观众问题、生成话术、控场和推送提词器。"
+        )
+
+    if "提词器" in compact and any(term in compact for term in ("怎么打开", "如何打开", "打开", "页面", "入口")):
+        return (
+            "先进入 /studio-login 登录 Studio，再进入 /studio-v2。"
+            "在 Studio 顶部点击“打开提词器”，系统会打开当前场次的 /teleprompter/{sessionId} 页面。"
+        )
+
+    if ("agentflow" in compact or "agent流程" in compact or "agent链路" in compact) and any(
+        term in compact for term in ("怎么看", "怎么查看", "在哪看", "在哪里看", "打开", "入口")
+    ):
+        return "在后台管理系统左侧点击 Agent Flow，或直接进入 /agent-flow 查看链路；具体 trace 可进入 /agent-flow/{traceId}。"
+
+    if any(term in compact for term in ("你能联网搜索吗", "你会联网搜索吗", "是否支持联网搜索", "能不能联网搜索")):
+        return "可以。只有当你明确要求查询最新或外部实时信息时，系统才会调用联网搜索；单纯询问能力时不会触发搜索。"
+
+    if any(term in compact for term in ("你会记住", "你能记住", "是否支持记忆", "能不能记住")):
+        return "可以在当前会话内回看近期问题和回答；当你明确要求“刚刚我问了什么”这类回忆任务时，系统才会走记忆召回。"
+
+    return None
+
+
 class DirectReplyAgent(BaseAgent):
     name = "direct"
 
@@ -75,6 +114,9 @@ class DirectReplyAgent(BaseAgent):
         )
         if _looks_like_noise_input(query):
             return "\u8fd9\u4e2a\u8f93\u5165\u8fd8\u4e0d\u591f\u660e\u786e\u3002\u4f60\u53ef\u4ee5\u76f4\u63a5\u544a\u8bc9\u6211\u4f60\u7684\u95ee\u9898\uff0c\u4f8b\u5982\u7cfb\u7edf\u80fd\u505a\u4ec0\u4e48\uff0c\u6216\u8005\u67d0\u4e2a\u5546\u54c1\u7684\u5177\u4f53\u4fe1\u606f\u3002"
+        system_help = _system_help_reply(query)
+        if system_help:
+            return system_help
         return (
             "\u60a8\u597d\uff01\n\n"
             "\u6211\u662f LiveAgent \u76f4\u64ad\u4e2d\u53f0\u667a\u80fd\u52a9\u624b\uff0c\u8d1f\u8d23\u5904\u7406\u7b80\u5355\u76f4\u7b54\u3001\u7cfb\u7edf\u8bf4\u660e\u4ee5\u53ca\u76f4\u64ad\u573a\u666f\u4e0b\u7684\u591a\u80fd\u529b\u534f\u540c\u3002\n\n"
@@ -115,6 +157,8 @@ class DirectReplyAgent(BaseAgent):
             f"{DIRECT_AGENT_PROFILE}\n\n"
             "\u3010\u53ef\u76f4\u63a5\u56de\u7b54\u3011\n"
             "\u95ee\u5019\u5bd2\u6684\u3001\u8eab\u4efd\u4ecb\u7ecd\u3001\u80fd\u529b\u8bf4\u660e\u3001\u7b80\u5355\u6f84\u6e05\u3001\u6280\u672f\u6027\u95ee\u9898\uff08\u5982\u5e95\u5c42\u6a21\u578b\uff09\u3002\n"
+            "后台和 Studio 导航说明也可以直接回答：Studio 登录入口是 /studio-login，登录后进入 /studio-v2；"
+            "后台首页是 /workbench，Agent Flow 是 /agent-flow，提词器页面是 /teleprompter/{sessionId}。\n"
             "\u5982\u679c\u7528\u6237\u95ee\u201c\u4f60\u662f\u4ec0\u4e48 agent\u201d\u3001\u201c\u4f60\u662f\u4ec0\u4e48\u52a9\u624b\u201d\u4e4b\u7c7b\u7684\u8eab\u4efd\u95ee\u9898\uff0c"
             "\u4f18\u5148\u6309 LiveAgent \u7cfb\u7edf\u5185\u7684\u89d2\u8272\u8eab\u4efd\u56de\u7b54\uff0c\u660e\u786e\u8bf4\u660e\u8fd9\u662f\u4ea7\u54c1\u5185\u7684 agent \u5b9a\u4f4d\uff0c"
             "\u4e0d\u662f\u5728\u95ee\u5e95\u5c42\u6a21\u578b\u5382\u5546\u3001\u53c2\u6570\u89c4\u6a21\u6216\u6a21\u578b\u67b6\u6784\u3002\n"

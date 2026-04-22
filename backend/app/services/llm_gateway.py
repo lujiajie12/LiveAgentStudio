@@ -160,7 +160,43 @@ class OpenAILLMGateway(LLMGateway):
             return "faq"
         return "mixed"
 
+    def _is_tool_capability_question(self, lowered: str) -> bool:
+        compact = re.sub(r"\s+", "", lowered)
+        capability_markers = ("你能", "你会", "你可以", "是否支持", "支持", "能不能", "可不可以", "会不会")
+        web_topics = ("联网搜索", "联网搜", "联网查", "上网搜索", "上网查", "访问互联网", "网上搜索")
+        memory_topics = ("记住", "记忆", "保存对话", "保存问题", "记下来")
+        web_action_markers = (
+            "帮我搜",
+            "帮我查",
+            "搜一下",
+            "查一下",
+            "查下",
+            "搜索一下",
+            "搜索下",
+            "最新",
+            "实时",
+            "新闻",
+            "官网",
+            "天气",
+            "汇率",
+            "股价",
+            "金价",
+            "油价",
+        )
+        if (
+            any(marker in compact for marker in capability_markers)
+            and any(topic in compact for topic in web_topics)
+            and not any(marker in compact for marker in web_action_markers)
+        ):
+            return True
+        return any(marker in compact for marker in capability_markers) and any(
+            topic in compact for topic in memory_topics
+        )
+
     def _infer_tool_intent(self, lowered: str) -> str:
+        if self._is_tool_capability_question(lowered):
+            return "none"
+
         datetime_keywords = (
             "今天周几",
             "今天是周几",

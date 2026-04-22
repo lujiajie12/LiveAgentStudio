@@ -137,7 +137,9 @@ def test_memory_reports_settings_and_ops_endpoints(client, auth_headers):
     assert action_center.status_code == 200
     cards = action_center.json()["data"]["cards"]
     assert [card["key"] for card in cards] == ["qa", "guardrail", "ops"]
-    assert cards[0]["title"] == "RAG 知识 Agent"
+    assert cards[0]["title"] == "Script Agent"
+    assert cards[0]["subtitle"] == "口播脚本"
+    assert cards[2]["content"] != "库存紧张，可适当加强优惠节奏和限时提醒。"
 
     tts_response = client.post(
         "/api/v1/ops/tts/broadcast",

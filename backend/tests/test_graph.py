@@ -1,12 +1,18 @@
+import json
+
 import pytest
 
 from app.agents.base import BaseAgent
+from app.agents.router import RouterAgent
 from app.infra.container import build_container
 
 
 class StubRouterAgent:
     def __init__(self, intent: str):
         self.intent = intent
+
+    async def route(self, state):
+        return await self.run(state)
 
     async def run(self, state):
         route_target = "direct" if self.intent == "unknown" else self.intent
@@ -63,6 +69,9 @@ class StubDirectAgent(BaseAgent):
 
 
 class SequentialPlannerAgent:
+    async def route(self, state):
+        return await self.run(state)
+
     async def run(self, state):
         if state.get("retrieved_docs"):
             return {
@@ -134,6 +143,9 @@ class StubRetrievalAwareQAAgent(BaseAgent):
 
 
 class SequentialWebSearchPlannerAgent:
+    async def route(self, state):
+        return await self.run(state)
+
     async def run(self, state):
         if state.get("tool_outputs"):
             return {
@@ -182,6 +194,19 @@ class SequentialWebSearchPlannerAgent:
         }
 
 
+class AlwaysWebSearchGateway:
+    def __init__(self):
+        self.calls = 0
+
+    async def ainvoke_text(self, system_prompt: str, user_prompt: str) -> str:
+        _ = system_prompt, user_prompt
+        self.calls += 1
+        return json.dumps(
+            {"route": "executor", "tool_action": "call_web_search", "reason": "always search"},
+            ensure_ascii=False,
+        )
+
+
 class StubWebSearchAwareQAAgent(BaseAgent):
     name = "qa"
 
@@ -213,7 +238,7 @@ class StubWebSearchAwareQAAgent(BaseAgent):
             "rewritten_query": state.get("rewritten_query", state["user_input"]),
             "agent_output": "stub qa answer from web search loop",
             "references": ["https://example.com/gold"],
-            "retrieved_docs": [],
+            "retrieved_docs": [{"doc_id": "https://example.com/gold", "content": "stub web result"}],
             "qa_confidence": 0.94,
             "unresolved": False,
             "agent_name": self.name,
@@ -318,4 +343,33 @@ async def test_graph_runtime_supports_planner_executor_loop_for_web_search():
     assert result["agent_name"] == "qa"
     assert result["final_output"] == "stub qa answer from web search loop"
     assert result["references"] == ["https://example.com/gold"]
+    assert result["executor_observations"][-1]["kind"] == "call_web_search"
+
+
+@pytest.mark.asyncio
+async def test_graph_runtime_router_hands_off_after_web_search_observation():
+    container = build_container()
+    gateway = AlwaysWebSearchGateway()
+    qa_agent = StubWebSearchAwareQAAgent()
+    container.graph_runtime.router_agent = RouterAgent(gateway)
+    container.graph_runtime.qa_agent = qa_agent
+
+    result = await container.graph_runtime.ainvoke(
+        {
+            "trace_id": "trace-router-loop-guard",
+            "session_id": "session-router-loop-guard",
+            "user_id": "user-1",
+            "user_input": "今日黄金金价是多少？",
+            "live_stage": "pitch",
+            "current_product_id": None,
+            "short_term_memory": [],
+        }
+    )
+
+    assert gateway.calls == 1
+    assert qa_agent.web_search_queries == ["今日黄金金价是多少？"]
+    assert len(qa_agent.run_states) == 1
+    assert result["intent"] == "qa"
+    assert result["agent_name"] == "qa"
+    assert result["final_output"] == "stub qa answer from web search loop"
     assert result["executor_observations"][-1]["kind"] == "call_web_search"

@@ -19,6 +19,7 @@ PLANNER_ACTION_CALL_DATETIME = "call_datetime"
 PLANNER_ACTION_CALL_WEB_SEARCH = "call_web_search"
 PLANNER_ACTION_RECALL_MEMORY = "recall_memory"
 PLANNER_ACTION_RETRIEVE_KNOWLEDGE = "retrieve_knowledge"
+PLANNER_ACTION_HANDOFF_AGENT = "handoff_agent"
 PLANNER_TOOL_ACTIONS = {
     PLANNER_ACTION_CALL_DATETIME,
     PLANNER_ACTION_CALL_WEB_SEARCH,
@@ -75,6 +76,8 @@ class RouterAgent(BaseAgent):
             "- 用户问\"你是谁\"、\"你是什么\"、\"你是一款什么agent\"、\"你是做什么的\"、\"介绍一下你自己\"\n"
             "- 用户说\"你好\"、\"在吗\"、\"hi\"、\"hello\" 等问候\n"
             "- 用户问系统能做什么、有什么功能、能力边界\n"
+            "- 用户问后台管理系统、Studio、直播操作台、提词器、Agent Flow 的入口、导航、区别、使用说明\n"
+            "- 用户只是问\"你能联网搜索吗\"、\"你会记住刚才的问题吗\"这类能力说明，必须 direct，不要调用工具\n"
             "\n"
             "【必须路由到 qa 的情况】\n"
             "- 商品参数、价格、规格、型号、材质\n"
@@ -84,8 +87,8 @@ class RouterAgent(BaseAgent):
             "\n"
             "【其他路由】\n"
             "- 日期时间（今天周几/现在几点）：executor + call_datetime\n"
-            "- 联网搜索（查一下/搜索）：executor + call_web_search\n"
-            "- 记忆回溯（回忆刚才）：executor + recall_memory\n"
+            "- 明确要求查外部实时信息（帮我查一下/搜索一下/最新新闻/官网/天气/汇率/金价）：executor + call_web_search\n"
+            "- 明确要求回忆历史内容（刚刚我问了什么/上一轮你怎么回答）：executor + recall_memory\n"
             "- 话术/文案生成：script\n"
             "- 复盘/统计/报告：analyst\n"
             "\n"
@@ -136,8 +139,154 @@ class RouterAgent(BaseAgent):
 
         return None
 
+    def _normalize_query(self, query: str) -> str:
+        return re.sub(r"\s+", "", str(query or "")).strip().lower()
+
+    def _handoff_result(
+        self,
+        route: str,
+        reason: str,
+        *,
+        intent: str | None = None,
+        tool_intent: str = TOOL_INTENT_NONE,
+        requires_retrieval: bool = False,
+        knowledge_scope: str | None = None,
+        low_confidence: bool = False,
+    ) -> StatePatch:
+        resolved_intent = intent or route
+        result: StatePatch = {
+            "route_target": route,
+            "route_reason": reason,
+            "intent": resolved_intent,
+            "tool_intent": tool_intent,
+            "requires_retrieval": requires_retrieval,
+            "route_low_confidence": low_confidence,
+            "planner_action": PLANNER_ACTION_HANDOFF_AGENT,
+            "planner_action_args": {
+                "agent": route,
+                "intent": resolved_intent,
+                "reason": reason,
+            },
+            "planning_completed": False,
+            "agent_name": self.name,
+        }
+        if knowledge_scope:
+            result["knowledge_scope"] = knowledge_scope
+        return result
+
+    def _is_web_search_capability_question(self, query: str) -> bool:
+        capability_markers = ("你能", "你会", "你可以", "是否支持", "支持", "能不能", "可不可以", "会不会")
+        web_topics = ("联网搜索", "联网搜", "联网查", "上网搜索", "上网查", "访问互联网", "网上搜索")
+        action_markers = (
+            "帮我搜",
+            "帮我查",
+            "搜一下",
+            "查一下",
+            "查下",
+            "搜索一下",
+            "搜索下",
+            "最新",
+            "实时",
+            "新闻",
+            "官网",
+            "天气",
+            "汇率",
+            "股价",
+            "金价",
+            "油价",
+        )
+        return (
+            any(marker in query for marker in capability_markers)
+            and any(topic in query for topic in web_topics)
+            and not any(marker in query for marker in action_markers)
+        )
+
+    def _is_memory_capability_question(self, query: str) -> bool:
+        capability_markers = ("你能", "你会", "你可以", "是否支持", "支持", "能不能", "可不可以", "会不会")
+        memory_topics = ("记住", "记忆", "保存对话", "保存问题", "记下来")
+        return any(marker in query for marker in capability_markers) and any(topic in query for topic in memory_topics)
+
+    def _is_system_navigation_question(self, query: str) -> bool:
+        system_terms = (
+            "studio",
+            "直播操作台",
+            "直播操作中台",
+            "后台管理系统",
+            "后台系统",
+            "提词器",
+            "agentflow",
+            "agent流程",
+            "agent链路",
+            "页面",
+            "入口",
+        )
+        navigation_terms = (
+            "从哪里进入",
+            "在哪里进入",
+            "怎么进入",
+            "如何进入",
+            "怎么打开",
+            "如何打开",
+            "打开",
+            "进入",
+            "入口",
+            "有什么区别",
+            "什么区别",
+            "区别",
+            "怎么看",
+            "怎么查看",
+            "在哪看",
+            "在哪里看",
+            "说明",
+        )
+        return any(term in query for term in system_terms) and any(term in query for term in navigation_terms)
+
+    def _fast_route(self, state: LiveAgentState) -> StatePatch | None:
+        observations = list(state.get("executor_observations") or [])
+        if observations:
+            last_kind = str(observations[-1].get("kind") or "").strip()
+            if last_kind == PLANNER_ACTION_CALL_WEB_SEARCH:
+                return self._handoff_result(
+                    self.ROUTE_QA,
+                    "handoff_after_web_search_observation",
+                    intent="qa",
+                    tool_intent=TOOL_INTENT_WEB_SEARCH,
+                    requires_retrieval=False,
+                )
+            if last_kind == PLANNER_ACTION_RETRIEVE_KNOWLEDGE:
+                return self._handoff_result(
+                    self.ROUTE_QA,
+                    "handoff_after_knowledge_retrieval",
+                    intent="qa",
+                    tool_intent=TOOL_INTENT_NONE,
+                    requires_retrieval=False,
+                    knowledge_scope=str(state.get("knowledge_scope") or "mixed"),
+                )
+
+        query = self._normalize_query(str(state.get("user_input", "")))
+        if not query:
+            return self._handoff_result(self.ROUTE_DIRECT, "empty_input_direct", intent="direct")
+        if (
+            self._is_web_search_capability_question(query)
+            or self._is_memory_capability_question(query)
+            or self._is_system_navigation_question(query)
+        ):
+            return self._handoff_result(self.ROUTE_DIRECT, "system_or_capability_question_direct", intent="direct")
+        return None
+
     async def route(self, state: LiveAgentState) -> StatePatch:
         """轻量路由接口，直接返回 LangGraph 节点名称和工具决策。"""
+        fast_route = self._fast_route(state)
+        if fast_route is not None:
+            logger.info(
+                "[ROUTER] trace_id=%s fast_route=%s reason=%s user_input=%s",
+                state.get("trace_id"),
+                fast_route.get("route_target"),
+                fast_route.get("route_reason"),
+                str(state.get("user_input", ""))[:50],
+            )
+            return fast_route
+
         system_prompt, user_prompt = self._build_routing_prompts(state)
         try:
             response = await self.llm_gateway.ainvoke_text(system_prompt, user_prompt)
@@ -148,6 +297,15 @@ class RouterAgent(BaseAgent):
                     "route_target": self.ROUTE_DIRECT,
                     "route_reason": "all_json_parse_failed",
                     "intent": "direct",
+                    "tool_intent": TOOL_INTENT_NONE,
+                    "requires_retrieval": False,
+                    "planner_action": PLANNER_ACTION_HANDOFF_AGENT,
+                    "planner_action_args": {
+                        "agent": self.ROUTE_DIRECT,
+                        "intent": "direct",
+                        "reason": "all_json_parse_failed",
+                    },
+                    "planning_completed": False,
                     "route_low_confidence": True,
                     "agent_name": self.name,
                 }
@@ -171,11 +329,20 @@ class RouterAgent(BaseAgent):
                 "route_target": route,
                 "route_reason": reason,
                 "route_low_confidence": False,
+                "tool_intent": TOOL_INTENT_NONE,
+                "requires_retrieval": route == self.ROUTE_QA,
+                "planner_action": PLANNER_ACTION_HANDOFF_AGENT,
+                "planner_action_args": {
+                    "agent": route,
+                    "intent": route if route != self.ROUTE_TOOLS else "qa",
+                    "reason": reason,
+                },
+                "planning_completed": False,
                 "agent_name": self.name,
             }
 
             # 当 route=executor 时，设置 planner_action 和 planner_action_args
-            if route == self.ROUTE_TOOLS and tool_action:
+            if route == self.ROUTE_TOOLS and tool_action in PLANNER_TOOL_ACTIONS:
                 result["planner_action"] = tool_action
                 result["intent"] = "qa"
                 if tool_action == PLANNER_ACTION_CALL_DATETIME:
@@ -198,6 +365,14 @@ class RouterAgent(BaseAgent):
                         "reason": reason,
                     }
             else:
+                if route == self.ROUTE_TOOLS:
+                    result["route_target"] = self.ROUTE_QA
+                    result["route_reason"] = f"{reason}; invalid_or_missing_tool_action_fallback_to_qa"
+                    result["planner_action_args"] = {
+                        "agent": self.ROUTE_QA,
+                        "intent": "qa",
+                        "reason": result["route_reason"],
+                    }
                 result["intent"] = route if route != self.ROUTE_TOOLS else "qa"
 
             return result
@@ -218,12 +393,20 @@ class RouterAgent(BaseAgent):
                 }
                 route_target = intent_to_route.get(intent, self.ROUTE_QA)
                 if tool_intent != TOOL_INTENT_NONE:
-                    route_target = self.ROUTE_TOOLS
+                    route_target = self.ROUTE_QA
                 return {
                     "route_target": route_target,
                     "route_reason": f"heuristic_fallback(json_parse_failed): {heuristic.get('reason', '')}",
                     "intent": intent,
                     "tool_intent": tool_intent,
+                    "requires_retrieval": route_target == self.ROUTE_QA and tool_intent == TOOL_INTENT_NONE,
+                    "planner_action": PLANNER_ACTION_HANDOFF_AGENT,
+                    "planner_action_args": {
+                        "agent": route_target,
+                        "intent": intent,
+                        "reason": f"heuristic_fallback(json_parse_failed): {heuristic.get('reason', '')}",
+                    },
+                    "planning_completed": False,
                     "route_low_confidence": True,
                     "agent_name": self.name,
                 }
@@ -231,6 +414,15 @@ class RouterAgent(BaseAgent):
                 "route_target": self.ROUTE_DIRECT,
                 "route_reason": "json_parse_failed",
                 "intent": "direct",
+                "tool_intent": TOOL_INTENT_NONE,
+                "requires_retrieval": False,
+                "planner_action": PLANNER_ACTION_HANDOFF_AGENT,
+                "planner_action_args": {
+                    "agent": self.ROUTE_DIRECT,
+                    "intent": "direct",
+                    "reason": "json_parse_failed",
+                },
+                "planning_completed": False,
                 "route_low_confidence": True,
                 "agent_name": self.name,
             }
@@ -251,12 +443,20 @@ class RouterAgent(BaseAgent):
                 }
                 route_target = intent_to_route.get(intent, self.ROUTE_QA)
                 if tool_intent != TOOL_INTENT_NONE:
-                    route_target = self.ROUTE_TOOLS
+                    route_target = self.ROUTE_QA
                 return {
                     "route_target": route_target,
                     "route_reason": f"heuristic_fallback: {heuristic.get('reason', '')}",
                     "intent": intent,
                     "tool_intent": tool_intent,
+                    "requires_retrieval": route_target == self.ROUTE_QA and tool_intent == TOOL_INTENT_NONE,
+                    "planner_action": PLANNER_ACTION_HANDOFF_AGENT,
+                    "planner_action_args": {
+                        "agent": route_target,
+                        "intent": intent,
+                        "reason": f"heuristic_fallback: {heuristic.get('reason', '')}",
+                    },
+                    "planning_completed": False,
                     "route_low_confidence": True,
                     "agent_name": self.name,
                 }
@@ -264,6 +464,15 @@ class RouterAgent(BaseAgent):
                 "route_target": self.ROUTE_DIRECT,
                 "route_reason": str(exc),
                 "intent": "qa",
+                "tool_intent": TOOL_INTENT_NONE,
+                "requires_retrieval": False,
+                "planner_action": PLANNER_ACTION_HANDOFF_AGENT,
+                "planner_action_args": {
+                    "agent": self.ROUTE_DIRECT,
+                    "intent": "qa",
+                    "reason": str(exc),
+                },
+                "planning_completed": False,
                 "route_low_confidence": True,
                 "agent_name": self.name,
             }

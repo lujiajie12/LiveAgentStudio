@@ -1,5 +1,5 @@
 <template>
-  <div class="shell shell--studio">
+  <div class="shell shell--backoffice">
     <div class="shell__backdrop" aria-hidden="true">
       <div class="shell__glow shell__glow--indigo"></div>
       <div class="shell__glow shell__glow--purple"></div>
@@ -7,60 +7,66 @@
       <div class="shell__noise"></div>
     </div>
 
-    <div class="shell__frame">
-      <aside class="shell__nav shell__nav--studio">
-        <div>
-          <div class="brand-card">
-            <div class="brand-card__logo">
-              <AppIcon name="settings" :size="18" />
-            </div>
-            <div>
-              <p class="shell__eyebrow">LiveAgent Studio</p>
-              <h1>直播智能体后台管理</h1>
-            </div>
-          </div>
+    <div class="shell__frame shell__frame--backoffice">
+      <aside class="backoffice-sidebar">
+        <div class="backoffice-sidebar__top">
+          <RouterLink class="backoffice-brand" to="/workbench">
+            <span class="backoffice-brand__logo">
+              <AppIcon name="monitor-play" :size="20" />
+            </span>
+            <span class="backoffice-brand__text">
+              <span class="backoffice-brand__eyebrow">LiveAgent Studio</span>
+              <span class="backoffice-brand__title">直播智能体后台</span>
+            </span>
+          </RouterLink>
 
-          <nav class="shell__menu shell__menu--studio">
+          <nav class="backoffice-nav backoffice-scrollbar">
             <RouterLink
               v-for="item in navItems"
               :key="item.to"
               :to="item.to"
-              class="nav-link"
+              class="backoffice-nav__item"
+              :class="{ 'backoffice-nav__item--active': isNavActive(item) }"
             >
-              <span class="nav-link__icon">
+              <span class="backoffice-nav__icon">
                 <AppIcon :name="item.icon" :size="18" />
               </span>
-              <span>{{ item.label }}</span>
+              <span class="backoffice-nav__label">{{ item.label }}</span>
+              <span v-if="isNavActive(item)" class="backoffice-nav__dot"></span>
             </RouterLink>
           </nav>
         </div>
 
-        <div class="shell__user shell__user--studio">
+        <div class="backoffice-sidebar__bottom">
           <RouterLink
-            class="primary-button shell__studio-link"
+            class="backoffice-studio-entry"
             :to="{ name: 'studio-login', query: { next: '/studio-v2' } }"
           >
-            进入 LiveAgent STUDIO v2.0
+            <AppIcon name="external-link" :size="16" />
+            <span>进入 Studio v2.0</span>
           </RouterLink>
 
-          <div class="user-card">
-            <div class="user-card__avatar">
-              <AppIcon name="user" :size="18" />
-            </div>
-            <div class="user-card__meta">
-              <p>{{ auth.user?.username || 'demo-admin' }}</p>
-              <small>{{ auth.user?.role || 'admin' }}</small>
-            </div>
+          <div class="backoffice-user-card">
+            <span class="backoffice-user-card__avatar">
+              <AppIcon name="user" :size="17" />
+            </span>
+            <span class="backoffice-user-card__meta">
+              <strong>{{ displayUsername }}</strong>
+              <small>{{ displayRole }}</small>
+            </span>
+            <button
+              type="button"
+              class="backoffice-user-card__logout"
+              aria-label="退出登录"
+              @click="logout"
+            >
+              <AppIcon name="logout" :size="16" />
+            </button>
           </div>
-
-          <button type="button" class="logout-link" @click="logout">
-            <AppIcon name="logout" :size="16" />
-            <span>退出登录</span>
-          </button>
         </div>
       </aside>
 
-      <main class="shell__main shell__main--studio">
+      <main class="shell__main shell__main--backoffice">
         <router-view />
       </main>
     </div>
@@ -68,23 +74,32 @@
 </template>
 
 <script setup>
-import { useRouter } from 'vue-router'
+import { computed } from 'vue'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import AppIcon from '@/components/AppIcon.vue'
 import { useAuthStore } from '@/stores/auth'
 
+const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
 const navItems = [
   { to: '/workbench', label: '首页', icon: 'home' },
-  { to: '/rag/offline', label: '离线索引管理', icon: 'book-open' },
-  { to: '/rag/online', label: '在线检索调试', icon: 'list-todo' },
-  { to: '/memory/qa', label: 'QA Memory', icon: 'history' },
-  { to: '/agent-flow', label: 'Agent Flow', icon: 'workflow' },
-  { to: '/reports', label: '复盘报告', icon: 'monitor-play' },
+  { to: '/rag/offline', label: '离线索引管理', icon: 'database' },
+  { to: '/rag/online', label: '在线检索调试', icon: 'search' },
+  { to: '/memory/qa', label: 'QA Memory', icon: 'message-square' },
+  { to: '/agent-flow', label: 'Agent Flow', icon: 'activity' },
+  { to: '/reports', label: '复盘报告', icon: 'file-text' },
   { to: '/system', label: '系统设置', icon: 'settings' }
 ]
+
+const displayUsername = computed(() => auth.user?.username || 'demo-admin')
+const displayRole = computed(() => auth.user?.role || 'admin')
+
+function isNavActive(item) {
+  return route.path === item.to || route.path.startsWith(`${item.to}/`)
+}
 
 function logout() {
   auth.logout()

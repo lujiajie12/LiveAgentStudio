@@ -5,7 +5,7 @@
         <div class="recent-qa__title-icon">
           <AppIcon name="history" :size="16" />
         </div>
-        <h3>最近问答</h3>
+        <h3>最近输出</h3>
         <span class="recent-qa__count">{{ filteredItems.length }} 条</span>
       </div>
 
@@ -103,8 +103,8 @@
     <div v-else class="recent-qa__empty">
       <AppIcon name="message-square" :size="18" />
       <div>
-        <strong>最近问答会沉淀在这里</strong>
-        <p>发送新的 QA 或直答请求后，系统会把最近的问答记录保存在这里，便于快速回看。</p>
+        <strong>最近输出会沉淀在这里</strong>
+        <p>发送新的 QA、直答、脚本或工具请求后，系统会把最近结果保存在这里，便于快速回看。</p>
       </div>
     </div>
 
@@ -207,6 +207,15 @@ function resolveTagTone(item) {
   }
   if (type === 'Direct') {
     return 'stream'
+  }
+  if (type === '脚本') {
+    return 'script'
+  }
+  if (type === '复盘') {
+    return 'analyst'
+  }
+  if (['日期时间', '联网搜索', '记忆召回'].includes(type)) {
+    return 'tool'
   }
   return 'rag'
 }
@@ -433,6 +442,24 @@ function resolveCitation(item) {
   color: #c4b5fd;
   background: rgba(139, 92, 246, 0.15);
   border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.recent-qa__answer-badge--script {
+  color: #fde68a;
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.recent-qa__answer-badge--analyst {
+  color: #bfdbfe;
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.recent-qa__answer-badge--tool {
+  color: #bae6fd;
+  background: rgba(14, 165, 233, 0.15);
+  border: 1px solid rgba(14, 165, 233, 0.3);
 }
 
 .recent-qa__citation {

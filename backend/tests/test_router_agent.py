@@ -12,9 +12,11 @@ class StubGateway:
     def __init__(self, payload=None, error=None):
         self.payload = payload
         self.error = error
+        self.calls = 0
 
     async def ainvoke_text(self, system_prompt: str, user_prompt: str) -> str:
         _ = system_prompt
+        self.calls += 1
         if self.error:
             raise self.error
         if isinstance(self.payload, str):
@@ -143,6 +145,41 @@ async def test_router_agent_routes_identity_question_to_direct():
     assert result["intent"] == "direct"
     assert result["route_target"] == "direct"
     assert result["route_low_confidence"] is False
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "我应该从哪里进入直播操作台？",
+        "后台管理系统和 Studio 有什么区别？",
+        "你能联网搜索吗？",
+        "你会记住我刚才的问题吗？",
+        "怎么打开提词器页面？",
+    ],
+)
+@pytest.mark.asyncio
+async def test_router_agent_fast_routes_system_help_and_capability_questions_to_direct(question):
+    gateway = StubGateway(payload={"route": "qa", "tool_action": None, "reason": "wrong llm route"})
+    agent = RouterAgent(gateway)
+
+    result = await agent.run(
+        {
+            "trace_id": "trace-system-help",
+            "session_id": "session-1",
+            "user_id": "user-1",
+            "user_input": question,
+            "live_stage": "pitch",
+            "current_product_id": None,
+            "short_term_memory": [],
+        }
+    )
+
+    assert gateway.calls == 0
+    assert result["intent"] == "direct"
+    assert result["route_target"] == "direct"
+    assert result["tool_intent"] == "none"
+    assert result["planner_action"] == "handoff_agent"
+    assert result["route_reason"] == "system_or_capability_question_direct"
 
 
 @pytest.mark.asyncio
