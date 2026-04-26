@@ -1,6 +1,7 @@
 # LiveAgentStudio
 
 A comprehensive platform for building, deploying, and managing intelligent agents with RAG (Retrieval-Augmented Generation) capabilities.
+<img width="2549" height="1816" alt="image" src="https://github.com/user-attachments/assets/fb672b4e-7479-4df2-8b55-cd38b53fe236" />
 
 ## Features
 
