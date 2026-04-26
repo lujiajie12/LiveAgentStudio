@@ -1,7 +1,8 @@
 # LiveAgentStudio
 
 A comprehensive platform for building, deploying, and managing intelligent agents with RAG (Retrieval-Augmented Generation) capabilities.
-![Uploading ChatGPT Image 2026年4月26日 16_06_11.png…]()
+<img width="1672" height="941" alt="111" src="https://github.com/user-attachments/assets/4011424a-fa88-4442-a564-4c7d41785c5e" />
+
 
 
 ## Features
