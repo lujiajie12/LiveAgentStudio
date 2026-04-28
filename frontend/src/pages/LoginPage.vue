@@ -1,11 +1,18 @@
 <template>
   <div class="login-page">
     <section class="login-card login-card--admin">
-      <p class="panel__eyebrow">Admin Access</p>
-      <h1>进入后台管理</h1>
+      <div class="login-card__brand">
+        <div class="login-card__brand-icon">
+          <AppIcon name="cpu" :size="22" />
+        </div>
+        <div>
+          <p class="panel__eyebrow">Admin Access</p>
+          <h1>进入后台管理</h1>
+        </div>
+      </div>
+
       <p class="muted">
-        这里是管理员和系统运维使用的后台管理系统。直播工作人员请从独立的 Studio
-        登录入口进入操作中台。
+        这里是管理员和系统运维使用的后台管理系统。直播工作人员请从独立的 Studio 登录入口进入操作中台。
       </p>
 
       <form class="login-form" @submit.prevent="submit">
@@ -44,6 +51,7 @@
 import { reactive } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 
+import AppIcon from '@/components/AppIcon.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()

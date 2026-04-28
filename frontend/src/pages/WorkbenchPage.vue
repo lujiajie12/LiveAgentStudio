@@ -96,9 +96,7 @@
             <strong>{{ operatorName }}</strong>
             <p>主控台权限</p>
           </div>
-          <button type="button" class="studio-v2__operator-link" title="Studio 设置暂未开放" disabled>
-            <AppIcon name="settings" :size="16" />
-          </button>
+          <ThemeWaveSwitch variant="operator" />
           <!-- 退出登录下拉菜单 -->
           <div v-if="showOperatorMenu" class="studio-v2__operator-dropdown">
             <div class="studio-v2__operator-dropdown-user">
@@ -517,6 +515,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } 
 
 import AppIcon from '@/components/AppIcon.vue'
 import RecentQAHistory from '@/components/RecentQAHistory.vue'
+import ThemeWaveSwitch from '@/components/ThemeWaveSwitch.vue'
 import { useStudioAuthStore } from '@/stores/studioAuth'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { readStudioUser } from '@/utils/studioAuth'
@@ -1118,5 +1117,35 @@ function closeOperatorMenu() {
 
 .studio-v2__operator-dropdown-item:hover {
   background: rgba(239, 68, 68, 0.12);
+}
+
+:global(:root[data-theme='light']) .studio-v2__ai-result-text {
+  border: 1px solid rgba(51, 65, 85, 0.12);
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.74);
+}
+
+:global(:root[data-theme='light']) .studio-v2__ai-result-text p,
+:global(:root[data-theme='light']) .studio-v2__ai-streaming-text {
+  color: #334155;
+}
+
+:global(:root[data-theme='light']) .studio-v2__operator-dropdown {
+  border-color: rgba(51, 65, 85, 0.13);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 18px 42px rgba(31, 41, 55, 0.14);
+  backdrop-filter: blur(16px);
+}
+
+:global(:root[data-theme='light']) .studio-v2__operator-dropdown-user strong {
+  color: #0f172a;
+}
+
+:global(:root[data-theme='light']) .studio-v2__operator-dropdown-user p {
+  color: #64748b;
+}
+
+:global(:root[data-theme='light']) .studio-v2__operator-dropdown-divider {
+  background: rgba(51, 65, 85, 0.12);
 }
 </style>

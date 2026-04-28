@@ -1,5 +1,69 @@
 # LiveAgentStudio
 
+## 项目概览
+
+LiveAgentStudio 是一个面向直播电商场景的大模型多智能体应用，覆盖直播中台、后台管理、商品知识问答、口播话术生成、直播复盘、短期/长期记忆、RAG 检索和 LangSmith 评测观测。系统目标不是做单轮聊天 Demo，而是把直播间实际会遇到的“问商品、写话术、查时间、回忆上下文、做复盘、后台运维”拆成可路由、可观测、可评测的生产链路。
+
+核心能力：
+
+- 多智能体路由：`direct`、`qa`、`script`、`analyst`、`datetime`、`memory_recall`、`long_memory` 等边界清晰分流。
+- RAG 商品问答：支持商品详情、售后规则、活动规则、FAQ 等知识检索问答。
+- 直播话术生成：根据商品、直播阶段、库存、优惠、风格生成主播口播脚本。
+- 记忆系统：短期会话记忆用于“刚刚问了什么”，Mem0 长期记忆用于跨 session 偏好、FAQ、商品事实召回。
+- 后台管理：离线索引管理、在线检索调试、QA Memory、Agent Flow、复盘报告、系统设置。
+- 主题体验：后台和中台均支持深浅色主题，带从切换按钮扩散的柔和波纹动效。
+- 评测体系：提供 LangSmith/本地脚本评测，输出 Accuracy、Precision、Recall、F1、Confusion Matrix，并按 router/tool/long_memory 拆分统计。
+
+## 技术栈
+
+| 层级 | 技术 |
+| --- | --- |
+| 前端 | Vue 3、Vite、Pinia、Vue Router、lucide 图标、原生 CSS 主题变量与动效 |
+| 后端 | FastAPI、LangGraph、SQLAlchemy、Pydantic、SSE 流式响应 |
+| 智能体 | Router Agent、QA Agent、Script Agent、Analyst Agent、Guardrail、Executor Tools |
+| RAG | Elasticsearch BM25、Milvus 向量检索、RRF 融合、Rerank、Markdown/文档切分 |
+| 记忆 | Redis 短期记忆、PostgreSQL 会话持久化、Mem0 长期记忆 |
+| 可观测与评测 | LangSmith tracing/evaluate、本地 eval 脚本、分类指标与混淆矩阵 |
+| 基础设施 | Docker Compose、PostgreSQL、Redis、Milvus、MinIO、Etcd、Elasticsearch |
+
+## 界面说明
+
+- `LiveAgent Studio`：面向主播、场控、客服的直播操作中台，包含直播大盘、实时弹幕、AI Action Center、QA 历史、风控提示和工作台入口。
+- `后台管理系统`：面向 admin 的运维后台，包含离线索引、在线检索调试、QA Memory、Agent Flow、复盘报告和系统设置。
+- `登录页`：区分后台管理和 Studio 操作台角色入口。
+- `主题系统`：深色主题偏直播科技感，浅色主题偏后台工具感；主题切换从左下角按钮触发柔和径向波纹。
+
+## 测试与评测结果
+
+本项目提供 `backend/scripts/eval_router_memory_langsmith.py` 作为统一评测入口，可本地运行，也可同步到 LangSmith UI。
+
+常用命令：
+
+```powershell
+cd backend
+python scripts/eval_router_memory_langsmith.py --mode all --dataset-size 0
+python scripts/eval_router_memory_langsmith.py --mode all --dataset-size 0 --langsmith
+python scripts/eval_router_memory_langsmith.py --mode all --dataset-size 200 --sync-dataset-only
+```
+
+当前 compact acceptance suite：
+
+- 样本数：37
+- Accuracy：91.89%
+- Contract Pass Rate：91.89%
+- Macro F1：83.33%
+- Weighted F1：91.89%
+- Router：100%
+- Tool：100%
+- Long Memory：57.14%，其中去重、跨用户隔离、污染控制已通过；写入后即时召回仍受 Mem0 异步处理与契约严格度影响。
+
+路由边界修复重点：
+
+- `direct` 不查库：问候、身份、能力说明、闲聊和直播上下文直接回复。
+- `script` 不被 QA 吃掉：口播、话术、脚本、促单、库存、优惠等生成类请求直接进入 Script Agent。
+- `memory_recall` 与长期记忆写入分离：元问题走记忆召回，“请记住/偏好/FAQ”走 QA 写入链路。
+- 评测拆分：router/tool/long_memory 分开算，避免长期记忆的外部服务波动污染路由准确率。
+
 LiveAgentStudio 是一个面向直播电商场景的多智能体系统，覆盖问答检索、实时控场、话术生成、风控拦截、记忆管理、知识库索引和后台运维。
 
 当前项目由三部分组成：
@@ -64,6 +128,7 @@ LiveAgentStudio/
 - `LLM_MODEL`
 - `SERPAPI_API_KEY`
 - `QA_MEMORY_*`
+- `LANGSMITH_*`
 - `EMBEDDING_*`
 
 这些都只应该放在 `backend/.env`。
@@ -131,6 +196,7 @@ Copy-Item backend/.env.example backend/.env
 - `PLANNER_MODEL`
 - `SERPAPI_API_KEY`
 - `EMBEDDING_MODEL`
+- `LANGSMITH_TRACING` / `LANGSMITH_API_KEY`（需要 LangSmith 追踪或评测时）
 
 说明：
 - 本地开发时，`DATABASE_URL` 和 `REDIS_URL` 一般写 `localhost`
@@ -272,6 +338,62 @@ cd deploy
 docker compose ps
 docker compose logs --tail=200 milvus
 ```
+
+### 9.4 LangSmith 路由与记忆评测
+
+先在 `backend/.env` 中开启追踪：
+
+```dotenv
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=你的 LangSmith API Key
+LANGSMITH_PROJECT=liveagent-router-memory-dev
+```
+
+然后启动后端并运行本地回归。`--mode all` 默认生成 200 条评测样例；如果只想跑最小种子集，可加 `--dataset-size 0`：
+
+```powershell
+cd backend
+python scripts/eval_router_memory_langsmith.py --mode all
+```
+
+如果要把同一批样例作为 LangSmith experiment 运行：
+
+```powershell
+python scripts/eval_router_memory_langsmith.py --mode all --langsmith
+```
+
+首次需要把样例写成 LangSmith dataset 时：
+
+```powershell
+python scripts/eval_router_memory_langsmith.py --mode all --langsmith --create-dataset
+```
+
+需要调整总样例数时：
+
+```powershell
+python scripts/eval_router_memory_langsmith.py --mode all --dataset-size 200 --langsmith --create-dataset
+```
+
+长期记忆质量测试需要先启用 Mem0：
+
+```dotenv
+QA_MEMORY_ENABLED=true
+MEM0_API_KEY=你的 Mem0 API Key
+```
+
+如果当前后端环境还没有 Mem0 SDK，先安装：
+
+```powershell
+python -m pip install "mem0ai[async]"
+```
+
+启用后可单独运行长期记忆 contract cases：
+
+```powershell
+python scripts/eval_router_memory_langsmith.py --mode long_memory --langsmith --create-dataset
+```
+
+这组样例覆盖 Mem0 写入、新 session 召回历史偏好/FAQ、召回相关性、重复写入控制、跨用户隔离，以及记忆回溯元问题不落长期记忆。
 
 ## 10. 常见问题排查
 

@@ -3,6 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from app.core.langsmith import (
+    summarize_memory_records,
+    summarize_memory_search_inputs,
+    summarize_memory_write_inputs,
+    summarize_memory_write_output,
+    traceable,
+)
 from app.graph.state import LiveAgentState
 from app.memory.memory_policy import MemoryPolicy
 from app.memory.memory_service import LongTermMemoryService, MemoryRecord
@@ -19,6 +26,12 @@ class QAMemoryHook:
     top_k: int = 4
     threshold: float = 0.45
 
+    @traceable(
+        name="liveagent.qa_memory.search",
+        run_type="retriever",
+        process_inputs=summarize_memory_search_inputs,
+        process_outputs=summarize_memory_records,
+    )
     async def search_for_state(self, state: LiveAgentState) -> list[MemoryRecord]:
         # 相似度搜索用于“当前问题需要借鉴历史偏好/FAQ/商品事实”的场景。
         user_id = str(state.get("user_id") or "").strip()
@@ -36,6 +49,12 @@ class QAMemoryHook:
         )
 
     # 记忆回溯类问题更适合直接拿最近记忆，而不是拿当前问句做相似度搜索。
+    @traceable(
+        name="liveagent.qa_memory.list_recent",
+        run_type="retriever",
+        process_inputs=summarize_memory_search_inputs,
+        process_outputs=summarize_memory_records,
+    )
     async def list_recent_for_state(self, state: LiveAgentState, limit: int = 3) -> list[MemoryRecord]:
         user_id = str(state.get("user_id") or "").strip()
         app_id = str(state.get("app_id") or self.app_id).strip() or self.app_id
@@ -80,6 +99,12 @@ class QAMemoryHook:
             for item in memories
         ]
 
+    @traceable(
+        name="liveagent.qa_memory.write",
+        run_type="tool",
+        process_inputs=summarize_memory_write_inputs,
+        process_outputs=summarize_memory_write_output,
+    )
     async def remember_qa_interaction(
         self,
         *,
@@ -102,7 +127,7 @@ class QAMemoryHook:
         if not decision.should_store or not decision.messages:
             return False
 
-        await self.memory_service.add_memory(
+        records = await self.memory_service.add_memory(
             messages=decision.messages,
             user_id=user_id,
             agent_id=self.agent_id,
@@ -110,4 +135,4 @@ class QAMemoryHook:
             run_id=run_id,
             metadata=decision.metadata,
         )
-        return True
+        return bool(records)

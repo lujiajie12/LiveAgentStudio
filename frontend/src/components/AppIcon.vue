@@ -88,6 +88,20 @@ const icons = {
     { type: 'path', value: 'm4.9 19.1 1.7-1.7' },
     { type: 'path', value: 'm17.4 6.6 1.7-1.7' }
   ],
+  sun: [
+    { type: 'circle', cx: 12, cy: 12, r: 4.2 },
+    { type: 'path', value: 'M12 2.5v2' },
+    { type: 'path', value: 'M12 19.5v2' },
+    { type: 'path', value: 'M4.8 4.8 6.2 6.2' },
+    { type: 'path', value: 'm17.8 17.8 1.4 1.4' },
+    { type: 'path', value: 'M2.5 12h2' },
+    { type: 'path', value: 'M19.5 12h2' },
+    { type: 'path', value: 'm4.8 19.2 1.4-1.4' },
+    { type: 'path', value: 'm17.8 6.2 1.4-1.4' }
+  ],
+  moon: [
+    { type: 'path', value: 'M20.2 14.4A8.2 8.2 0 0 1 9.6 3.8 8.2 8.2 0 1 0 20.2 14.4Z' }
+  ],
   logout: [
     { type: 'path', value: 'M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4' },
     { type: 'path', value: 'M16 17l5-5-5-5' },
@@ -125,6 +139,45 @@ const icons = {
   ],
   activity: [
     { type: 'path', value: 'M3 12h4l2.5-5 4 10 2.5-5H21' }
+  ],
+  search: [
+    { type: 'circle', cx: 11, cy: 11, r: 7 },
+    { type: 'path', value: 'm20 20-3.5-3.5' }
+  ],
+  brain: [
+    { type: 'path', value: 'M9 4.5A3 3 0 0 0 4.8 8a3.2 3.2 0 0 0 .1 6.1A3.4 3.4 0 0 0 9 19.5V4.5Z' },
+    { type: 'path', value: 'M15 4.5A3 3 0 0 1 19.2 8a3.2 3.2 0 0 1-.1 6.1A3.4 3.4 0 0 1 15 19.5V4.5Z' },
+    { type: 'path', value: 'M9 9.5H6.8' },
+    { type: 'path', value: 'M15 9.5h2.2' },
+    { type: 'path', value: 'M9 14h-2' },
+    { type: 'path', value: 'M15 14h2' }
+  ],
+  bell: [
+    { type: 'path', value: 'M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9' },
+    { type: 'path', value: 'M10 21a2 2 0 0 0 4 0' }
+  ],
+  'external-link': [
+    { type: 'path', value: 'M14 4h6v6' },
+    { type: 'path', value: 'm10 14 10-10' },
+    { type: 'path', value: 'M20 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4' }
+  ],
+  cpu: [
+    { type: 'rect', x: 6, y: 6, width: 12, height: 12, rx: 2 },
+    { type: 'rect', x: 9, y: 9, width: 6, height: 6, rx: 1 },
+    { type: 'path', value: 'M9 2v3' },
+    { type: 'path', value: 'M15 2v3' },
+    { type: 'path', value: 'M9 19v3' },
+    { type: 'path', value: 'M15 19v3' },
+    { type: 'path', value: 'M2 9h3' },
+    { type: 'path', value: 'M2 15h3' },
+    { type: 'path', value: 'M19 9h3' },
+    { type: 'path', value: 'M19 15h3' }
+  ],
+  'bar-chart-3': [
+    { type: 'path', value: 'M4 20V10' },
+    { type: 'path', value: 'M12 20V4' },
+    { type: 'path', value: 'M20 20v-7' },
+    { type: 'path', value: 'M3 20h18' }
   ],
   tag: [
     { type: 'path', value: 'M20 13 11 22l-9-9V4h9z' },

@@ -38,10 +38,24 @@ class MemoryBackend(Protocol):
     ) -> Any:
         ...
 
-    async def search(self, query: str, *, user_id: str, top_k: int) -> Any:
+    async def search(
+        self,
+        query: str,
+        *,
+        user_id: str,
+        top_k: int,
+        agent_id: str | None = None,
+        app_id: str | None = None,
+    ) -> Any:
         ...
 
-    async def get_all(self, *, user_id: str | None = None) -> Any:
+    async def get_all(
+        self,
+        *,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        app_id: str | None = None,
+    ) -> Any:
         ...
 
     async def delete(self, memory_id: str) -> Any:
@@ -83,11 +97,23 @@ class InMemoryMem0Backend:
         self._items[memory_id] = record
         return [record]
 
-    async def search(self, query: str, *, user_id: str, top_k: int) -> list[dict[str, Any]]:
+    async def search(
+        self,
+        query: str,
+        *,
+        user_id: str,
+        top_k: int,
+        agent_id: str | None = None,
+        app_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         normalized_query = self._tokenize(query)
         results: list[dict[str, Any]] = []
         for item in self._items.values():
             if item["metadata"].get("scope_user_id") != user_id:
+                continue
+            if agent_id and item["metadata"].get("scope_agent_id") != agent_id:
+                continue
+            if app_id and item["metadata"].get("scope_app_id") != app_id:
                 continue
             score = self._score(normalized_query, self._tokenize(item.get("memory", "")))
             if score <= 0:
@@ -96,11 +122,21 @@ class InMemoryMem0Backend:
         results.sort(key=lambda entry: entry.get("score", 0.0), reverse=True)
         return results[:top_k]
 
-    async def get_all(self, *, user_id: str | None = None) -> list[dict[str, Any]]:
+    async def get_all(
+        self,
+        *,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        app_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         items = list(self._items.values())
-        if user_id is None:
-            return items
-        return [item for item in items if item["metadata"].get("scope_user_id") == user_id]
+        if user_id is not None:
+            items = [item for item in items if item["metadata"].get("scope_user_id") == user_id]
+        if agent_id:
+            items = [item for item in items if item["metadata"].get("scope_agent_id") == agent_id]
+        if app_id:
+            items = [item for item in items if item["metadata"].get("scope_app_id") == app_id]
+        return items
 
     async def delete(self, memory_id: str) -> bool:
         return self._items.pop(memory_id, None) is not None
@@ -159,22 +195,44 @@ class Mem0PlatformBackend:
             user_id=user_id,
             agent_id=agent_id,
             app_id=app_id,
-            run_id=run_id,
             metadata=metadata,
+            infer=False,
         )
 
-    async def search(self, query: str, *, user_id: str, top_k: int) -> Any:
-        try:
-            return await self.client.search(query, user_id=user_id, top_k=top_k)
-        except TypeError:  # pragma: no cover - SDK compatibility shim
-            return await self.client.search(query, user_id=user_id, limit=top_k)
+    async def search(
+        self,
+        query: str,
+        *,
+        user_id: str,
+        top_k: int,
+        agent_id: str | None = None,
+        app_id: str | None = None,
+    ) -> Any:
+        payload = {"query": query, "user_id": user_id, "top_k": top_k}
+        if agent_id:
+            payload["agent_id"] = agent_id
+        if app_id:
+            payload["app_id"] = app_id
+        response = await self.client.async_client.post("/v1/memories/search/", json=payload)
+        response.raise_for_status()
+        return response.json()
 
-    async def get_all(self, *, user_id: str | None = None) -> Any:
+    async def get_all(
+        self,
+        *,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        app_id: str | None = None,
+    ) -> Any:
         if user_id:
-            try:
-                return await self.client.get_all(user_id=user_id)
-            except TypeError:  # pragma: no cover
-                return await self.client.get_all(filters={"user_id": user_id})
+            params = {"user_id": user_id}
+            if agent_id:
+                params["agent_id"] = agent_id
+            if app_id:
+                params["app_id"] = app_id
+            response = await self.client.async_client.get("/v1/memories/", params=params)
+            response.raise_for_status()
+            return response.json()
         return await self.client.get_all()
 
     async def delete(self, memory_id: str) -> Any:
@@ -263,7 +321,13 @@ class LongTermMemoryService:
         if not self.enabled or not self.backend or not query.strip():
             return []
         try:
-            raw = await self.backend.search(query, user_id=user_id, top_k=max(top_k * 4, top_k))
+            raw = await self.backend.search(
+                query,
+                user_id=user_id,
+                agent_id=agent_id,
+                app_id=app_id,
+                top_k=max(top_k * 4, top_k),
+            )
         except Exception:
             return []
         normalized = self._normalize_records(raw)
@@ -280,8 +344,10 @@ class LongTermMemoryService:
         if not self.enabled or not self.backend:
             return []
         user_id = self._string_or_none(filters.get("user_id"))
+        agent_id = self._string_or_none(filters.get("agent_id"))
+        app_id = self._string_or_none(filters.get("app_id"))
         try:
-            raw = await self.backend.get_all(user_id=user_id)
+            raw = await self.backend.get_all(user_id=user_id, agent_id=agent_id, app_id=app_id)
         except Exception:
             return []
         normalized = self._normalize_records(raw)
@@ -310,12 +376,23 @@ class LongTermMemoryService:
         for item in raw_items:
             if not isinstance(item, dict):
                 continue
+            data = item.get("data") if isinstance(item.get("data"), dict) else {}
+            metadata = dict(item.get("metadata") or {})
+            memory_types = metadata.get("memory_types")
+            if isinstance(memory_types, str):
+                metadata["memory_types"] = [memory_types]
             normalized.append(
                 MemoryRecord(
                     memory_id=str(item.get("id") or item.get("memory_id") or ""),
-                    memory=str(item.get("memory") or item.get("text") or item.get("content") or "").strip(),
+                    memory=str(
+                        item.get("memory")
+                        or data.get("memory")
+                        or item.get("text")
+                        or item.get("content")
+                        or ""
+                    ).strip(),
                     score=float(item.get("score") or item.get("similarity") or 0.0),
-                    metadata=dict(item.get("metadata") or {}),
+                    metadata=metadata,
                     created_at=self._string_or_none(item.get("created_at")),
                     updated_at=self._string_or_none(item.get("updated_at")),
                     raw=item,

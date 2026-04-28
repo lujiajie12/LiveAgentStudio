@@ -124,6 +124,13 @@ class AppSettings(BaseSettings):
     # 流式输出与观测
     SSE_EVENT_DELAY_MS: int = 25
     CHAT_TOKEN_CHUNK_SIZE: int = 6
+    LANGSMITH_TRACING: bool = False
+    LANGSMITH_TRACING_V2: bool = False
+    LANGSMITH_API_KEY: Optional[str] = None
+    LANGSMITH_ENDPOINT: str = "https://api.smith.langchain.com"
+    LANGSMITH_PROJECT: str = "liveagent-studio-dev"
+    LANGSMITH_RUN_TAGS_STR: str = "liveagent,backend"
+    LANGCHAIN_CALLBACKS_BACKGROUND: bool = False
     # 这里按“消息条数”裁剪短期记忆，而不是按“问答轮数”。
     MEMORY_WINDOW_SIZE: int = 12
     MEMORY_TTL_SECONDS: int = 7200

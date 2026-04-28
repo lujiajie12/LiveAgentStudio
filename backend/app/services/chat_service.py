@@ -230,7 +230,12 @@ class ChatService:
             request.live_stage.value,
             request.hot_keywords,
         )
-        if self.qa_memory_hook is not None and result.get("agent_name") == "qa":
+        should_write_qa_memory = self.qa_memory_hook is not None and (
+            result.get("agent_name") == "qa"
+            or result.get("route_target") == "qa"
+            or result.get("intent") == "qa"
+        )
+        if should_write_qa_memory:
             try:
                 # 只有 QA 场景写长期记忆。
                 # direct/script/analyst 这类结果很多是流程性或一次性内容，不适合直接沉淀。

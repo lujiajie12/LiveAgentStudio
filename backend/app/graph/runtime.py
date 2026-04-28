@@ -19,6 +19,7 @@ from app.agents.router import (
     TOOL_INTENT_WEB_SEARCH,
     RouterAgent,
 )
+from app.core.langsmith import build_langsmith_config, summarize_graph_inputs, summarize_graph_outputs, traceable
 from app.core.logging import get_logger
 from app.core.observability import record_tool_call, record_timed_tool_call
 from app.graph.state import LiveAgentState
@@ -341,7 +342,10 @@ class GraphRuntime:
                 }
         # 优先使用轻量路由接口（直接返回节点名称）
         try:
-            return await self.router_agent.route(state)
+            route = getattr(self.router_agent, "route", None)
+            if route is not None:
+                return await route(state)
+            return await self.router_agent.run(state)
         except Exception as exc:
             # 回退：如果路由失败，默认路由到 qa，避免图卡死
             logger.warning("[PLANNER] route failed, using fallback: %s", exc)
@@ -392,6 +396,17 @@ class GraphRuntime:
             "agent_name": state.get("agent_name", "guardrail"),
         }
 
+    @traceable(
+        name="liveagent.graph_runtime",
+        run_type="chain",
+        process_inputs=summarize_graph_inputs,
+        process_outputs=summarize_graph_outputs,
+    )
     async def ainvoke(self, state: dict):
         # 外部统一从这里进入主图。
-        return await self.graph.ainvoke(state)
+        config = build_langsmith_config(
+            state,
+            run_name="liveagent.chat_graph",
+            tags=["langgraph", "chat"],
+        )
+        return await self.graph.ainvoke(state, config=config)

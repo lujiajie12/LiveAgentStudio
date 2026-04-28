@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import router as api_router
 from app.core.config import settings
 from app.core.exceptions import register_exception_handlers
+from app.core.langsmith import configure_langsmith_environment
 from app.core.logging import configure_logging
 from app.core.trace import TraceIDMiddleware
 from app.infra.container import build_container
@@ -14,6 +15,7 @@ from app.infra.container import build_container
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     configure_logging()
+    configure_langsmith_environment()
     app.state.container = build_container()
     yield
 

@@ -82,7 +82,7 @@
                 v-model="form.password"
                 type="password"
                 required
-                placeholder="••••••••"
+                placeholder="请输入登录密码"
               />
             </div>
           </label>

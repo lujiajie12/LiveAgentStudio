@@ -114,6 +114,7 @@ class GuardrailService:
         normalized_references = self._validate_references(
             references=state.get("references", []),
             retrieved_docs=state.get("retrieved_docs", []),
+            allowed_urls=self._allowed_tool_reference_urls(state.get("tool_outputs", {})),
         )
         if normalized_references != list(state.get("references", []) or []):
             reasons.append("invalid_references")
@@ -133,18 +134,41 @@ class GuardrailService:
         self,
         references: list[Any],
         retrieved_docs: list[dict[str, Any]],
+        allowed_urls: set[str] | None = None,
     ) -> list[str]:
         valid_doc_ids = {
             str(doc.get("doc_id", "")).strip()
             for doc in retrieved_docs
             if str(doc.get("doc_id", "")).strip()
         }
-        if not valid_doc_ids:
-            return []
+        valid_urls = allowed_urls or set()
 
         normalized: list[str] = []
         for item in references or []:
             ref_id = str(item).strip()
-            if ref_id and ref_id in valid_doc_ids and ref_id not in normalized:
+            if ref_id and (ref_id in valid_doc_ids or ref_id in valid_urls) and ref_id not in normalized:
                 normalized.append(ref_id)
         return normalized
+
+    def _allowed_tool_reference_urls(self, tool_outputs: dict[str, Any]) -> set[str]:
+        urls: set[str] = set()
+        if not isinstance(tool_outputs, dict):
+            return urls
+        for payload in tool_outputs.values():
+            if not isinstance(payload, dict):
+                continue
+            answer_box = payload.get("answer_box") or {}
+            if isinstance(answer_box, dict):
+                self._add_url(urls, answer_box.get("link"))
+            knowledge_graph = payload.get("knowledge_graph") or {}
+            if isinstance(knowledge_graph, dict):
+                self._add_url(urls, knowledge_graph.get("website"))
+            for item in payload.get("organic_results") or []:
+                if isinstance(item, dict):
+                    self._add_url(urls, item.get("link"))
+        return urls
+
+    def _add_url(self, urls: set[str], value: Any) -> None:
+        text = str(value or "").strip()
+        if text.startswith(("http://", "https://")):
+            urls.add(text)

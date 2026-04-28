@@ -576,4 +576,52 @@ function resolveCitation(item) {
   color: #f8fafc;
   margin-bottom: 6px;
 }
+
+:global(:root[data-theme='light']) .recent-qa {
+  border-color: rgba(51, 65, 85, 0.13);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.78), rgba(248, 251, 255, 0.62)),
+    rgba(255, 255, 255, 0.68);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.74),
+    0 16px 40px rgba(31, 41, 55, 0.08);
+  backdrop-filter: blur(18px);
+}
+
+:global(:root[data-theme='light']) .recent-qa__header,
+:global(:root[data-theme='light']) .recent-qa__footer {
+  border-color: rgba(51, 65, 85, 0.12);
+  background: linear-gradient(135deg, rgba(239, 246, 255, 0.8), rgba(255, 255, 255, 0.5));
+}
+
+:global(:root[data-theme='light']) .recent-qa__item {
+  border-color: rgba(51, 65, 85, 0.1);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(241, 247, 255, 0.58));
+  box-shadow: 0 10px 26px rgba(31, 41, 55, 0.07);
+}
+
+:global(:root[data-theme='light']) .recent-qa__title h3,
+:global(:root[data-theme='light']) .recent-qa__question-bubble p,
+:global(:root[data-theme='light']) .recent-qa__answer-text,
+:global(:root[data-theme='light']) .recent-qa__empty strong {
+  color: #0f172a;
+}
+
+:global(:root[data-theme='light']) .recent-qa__question-bubble {
+  border-color: rgba(99, 102, 241, 0.18);
+  background: rgba(238, 242, 255, 0.72);
+}
+
+:global(:root[data-theme='light']) .recent-qa__answer-bubble,
+:global(:root[data-theme='light']) .recent-qa__thinking {
+  border-color: rgba(20, 184, 166, 0.2);
+  background: rgba(240, 253, 250, 0.76);
+}
+
+:global(:root[data-theme='light']) .recent-qa__count,
+:global(:root[data-theme='light']) .recent-qa__time,
+:global(:root[data-theme='light']) .recent-qa__citation,
+:global(:root[data-theme='light']) .recent-qa__empty {
+  color: #66758a;
+}
 </style>
