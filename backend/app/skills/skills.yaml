@@ -1,0 +1,26 @@
+skills:
+  - id: "model_identity"
+    name: "底层模型身份问答"
+    enabled: true
+    priority: 10
+    match:
+      mode: "keyword_any"
+      keywords:
+        - "什么大模型"
+        - "什么模型"
+        - "哪个模型"
+        - "底层模型"
+        - "用的什么LLM"
+        - "基于什么模型"
+        - "chatgpt还是"
+        - "还是chatgpt"
+        - "gpt还是"
+        - "还是gpt"
+        - "大模型还是"
+        - "还是大模型"
+        - "qwen还是"
+        - "还是qwen"
+    response:
+      text: "我是 LiveAgent 直播中台智能助手，底层基于通义千问（Qwen）系列大模型驱动，通过多智能体协同架构，根据不同任务场景自动调度最合适的模型来处理您的请求。如果您还有其他问题，请随时告诉我。"
+      agent_name: "skill"
+      intent: "direct"

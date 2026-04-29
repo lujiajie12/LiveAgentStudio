@@ -18,6 +18,9 @@ dist/
 .agents/
 .codex/
 .vscode/
+.codex/
+.claude/
+.agents/
 .idea/
 *.swp
 *.swo
@@ -25,6 +28,9 @@ dist/
 .pytest_cache/
 .coverage
 htmlcov/
+tests/
 
 postgres_data/
 redis_data/
+
+SKILL.md
