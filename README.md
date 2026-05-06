@@ -53,7 +53,7 @@ python scripts/eval_router_memory_langsmith.py --mode all --dataset-size 200 --s
 
 当前 compact acceptance suite：
 
-- 样本数：37
+- 样本数：1000
 - Accuracy：91.89%
 - Contract Pass Rate：91.89%
 - Macro F1：83.33%
