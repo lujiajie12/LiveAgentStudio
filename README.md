@@ -1,5 +1,10 @@
 # LiveAgentStudio
 
+A comprehensive platform for building, deploying, and managing intelligent agents with RAG (Retrieval-Augmented Generation) capabilities.
+<img width="1672" height="941" alt="liveagent4EC" src="https://github.com/user-attachments/assets/1418f155-d268-4a68-8035-7728f3c9f466" />
+
+
+
 ## 项目概览
 
 LiveAgentStudio 是一个面向直播电商场景的大模型多智能体应用，覆盖直播中台、后台管理、商品知识问答、口播话术生成、直播复盘、短期/长期记忆、RAG 检索和 LangSmith 评测观测。系统目标不是做单轮聊天 Demo，而是把直播间实际会遇到的“问商品、写话术、查时间、回忆上下文、做复盘、后台运维”拆成可路由、可观测、可评测的生产链路。
