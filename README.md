@@ -6,6 +6,7 @@ A comprehensive platform for building, deploying, and managing intelligent agent
 
 
 <img width="2549" height="1195" alt="image" src="https://github.com/user-attachments/assets/2065e752-fb00-4ecc-9ba0-3f38c5169011" />
+<img width="2549" height="1957" alt="image" src="https://github.com/user-attachments/assets/186fdeee-be0f-493e-bb0d-a6aa9270e9f0" />
 <img width="2549" height="2761" alt="image" src="https://github.com/user-attachments/assets/abc4fc64-257b-49c4-826d-88c0bc8dbf18" />
 
 
