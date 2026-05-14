@@ -18,13 +18,7 @@ LiveAgentStudio 是一个面向直播电商场景的大模型多智能体系统�
 <img width="2549" height="1195" alt="image" src="https://github.com/user-attachments/assets/239d483e-c3b0-4e64-9d6d-50b1c930d690" />
 <img width="2549" height="1195" alt="image" src="https://github.com/user-attachments/assets/567676c4-fc14-4d02-99ab-d075344ff6da" />
 
-| 在线检索调试 | QA Memory | Agent Flow |
-| --- | --- | --- |
-| 待补充 | 待补充 | 待补充 |
 
-| 复盘报告 | 系统设置 | 深浅色主题 |
-| --- | --- | --- |
-| 待补充 | 待补充 | 待补充 |
 
 ## 1. Project Highlights
 
